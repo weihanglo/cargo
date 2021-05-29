@@ -520,6 +520,7 @@ pub enum MaybeLock {
     Download { url: String, descriptor: String },
 }
 
+mod db;
 mod index;
 mod local;
 mod remote;
