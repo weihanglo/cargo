@@ -10,7 +10,7 @@ const TABLE_SUMMARIES: &'static str = "\
 CREATE TABLE IF NOT EXISTS summaries (
     name TEXT PRIMARY KEY NOT NULL,
     contents BLOB NOT NULL
-)";
+) WITHOUT ROWID";
 
 const INSERT_SUMMERIES: &'static str = "\
 INSERT OR REPLACE INTO summaries (name, contents) VALUES (?, ?)";
@@ -25,6 +25,7 @@ impl Db {
             let conn = Connection::open(path.as_ref())?;
             conn.pragma_update(None, "locking_mode", &"EXCLUSIVE")?;
             conn.pragma_update(None, "cache_size", &2048)?;
+            conn.pragma_update(None, "journal_mode", &"WAL")?;
             conn.execute(TABLE_SUMMARIES, [])?;
             Ok(Mutex::new(Self(conn)))
         })
@@ -35,11 +36,10 @@ impl Db {
         K: AsRef<[u8]>,
     {
         let key = key.as_ref();
-        Ok(self.0.query_row(
-            "SELECT contents FROM summaries WHERE name = ? LIMIT 1",
-            [key],
-            |row| row.get(0),
-        )?)
+        Ok(self
+            .0
+            .prepare_cached("SELECT contents FROM summaries WHERE name = ? LIMIT 1")?
+            .query_row([key], |row| row.get(0))?)
     }
 
     pub fn insert<K>(&self, key: K, value: &[u8]) -> CargoResult<()>
@@ -47,7 +47,10 @@ impl Db {
         K: AsRef<[u8]>,
     {
         let key = key.as_ref();
-        let modified = self.0.execute(INSERT_SUMMERIES, params![key, value])?;
+        let modified = self
+            .0
+            .prepare_cached(INSERT_SUMMERIES)?
+            .execute(params![key, value])?;
         log::debug!(
             "insert {} record for {}",
             modified,
