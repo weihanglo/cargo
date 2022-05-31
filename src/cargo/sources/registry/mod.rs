@@ -169,7 +169,7 @@ use std::task::Poll;
 use anyhow::Context as _;
 use cargo_util::paths::exclude_from_backups_and_indexing;
 use flate2::read::GzDecoder;
-use log::debug;
+use log::{debug, warn};
 use semver::Version;
 use serde::Deserialize;
 use tar::Archive;
@@ -652,6 +652,18 @@ impl<'cfg> RegistrySource<'cfg> {
             }
             result
                 .with_context(|| format!("failed to unpack entry at `{}`", entry_path.display()))?;
+
+            // Make it readonly so that user won't accidently modified when
+            // tracing the source code.
+            let entry_path = parent.join(&entry_path);
+            let _ = entry_path
+                .metadata()
+                .and_then(|meta| {
+                    let mut perm = meta.permissions();
+                    perm.set_readonly(true);
+                    std::fs::set_permissions(&entry_path, perm)
+                })
+                .map_err(|e| warn!("failed to set readonly for `{entry_path:?}`: {e}"));
         }
 
         // The lock file is created after unpacking so we overwrite a lock file

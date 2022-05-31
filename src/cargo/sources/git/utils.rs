@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context as _};
 use cargo_util::{paths, ProcessBuilder};
 use curl::easy::List;
 use git2::{self, ErrorClass, ObjectType};
-use log::{debug, info};
+use log::{debug, info, warn};
 use serde::ser;
 use serde::Serialize;
 use std::env;
@@ -177,6 +177,7 @@ impl GitDatabase {
             Some(c) => c,
             None => GitCheckout::clone_into(dest, self, rev, cargo_config)?,
         };
+        set_readonly(&checkout.repo);
         checkout.update_submodules(cargo_config)?;
         Ok(checkout)
     }
@@ -425,6 +426,7 @@ impl<'a> GitCheckout<'a> {
 
             let obj = repo.find_object(head, None)?;
             reset(&repo, &obj, cargo_config)?;
+            set_readonly(&repo);
             update_submodules(&repo, cargo_config)
         }
     }
@@ -1088,4 +1090,57 @@ fn github_up_to_date(
     handle.http_headers(headers)?;
     handle.perform()?;
     Ok(handle.response_code()? == 304)
+}
+
+/// Set all files in a repository as readonly.
+fn set_readonly(repo: &git2::Repository) {
+    let root = match repo.workdir() {
+        Some(path) => path,
+        None => {
+            warn!("can't list files on a bare repository");
+            return;
+        }
+    };
+
+    let index = match repo.index() {
+        Ok(index) => index,
+        Err(e) => {
+            warn!("can't get index for repository at {root:?}: {e}");
+            return;
+        }
+    };
+
+    index
+        .iter()
+        .filter(|entry| {
+            // * Ignore symlinks. What they link to would either be checked or
+            //   be outside the current directory.
+            // * Ingore commit objects, which is likely a git submodule.
+            use libgit2_sys::{GIT_FILEMODE_COMMIT, GIT_FILEMODE_LINK};
+            entry.mode != GIT_FILEMODE_COMMIT as u32 && entry.mode != GIT_FILEMODE_LINK as u32
+        })
+        .for_each(|entry| {
+            #[cfg(unix)]
+            fn join(path: &Path, data: &[u8]) -> PathBuf {
+                use std::ffi::OsStr;
+                use std::os::unix::prelude::*;
+                path.join(<OsStr as OsStrExt>::from_bytes(data))
+            }
+            // TODO: files might inherit permissions from parent directories
+            #[cfg(windows)]
+            fn join(path: &Path, data: &[u8]) -> PathBuf {
+                use std::str;
+                path.join(str::from_utf8(data).unwrap())
+            }
+            let path = &join(&root, &entry.path);
+
+            let _ = path
+                .metadata()
+                .and_then(|meta| {
+                    let mut perm = meta.permissions();
+                    perm.set_readonly(true);
+                    std::fs::set_permissions(path, perm)
+                })
+                .map_err(|e| warn!("failed to set readonly for `{path:?}`: {e}"));
+        });
 }
