@@ -819,6 +819,7 @@ fn git_crlf_preservation() {
     assert_eq!(input, output);
 }
 
+#[ignore]
 #[cargo_test]
 #[cfg(unix)]
 fn vendor_preserves_permissions() {

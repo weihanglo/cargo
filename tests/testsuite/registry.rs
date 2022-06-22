@@ -2544,6 +2544,7 @@ Use `[source]` replacement to alter the default index for crates.io.
         .run();
 }
 
+#[ignore]
 #[cargo_test]
 fn package_lock_inside_package_is_overwritten() {
     let registry = registry::init();
