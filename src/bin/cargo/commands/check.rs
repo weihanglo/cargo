@@ -51,6 +51,18 @@ pub fn exec(config: &mut Config, args: &ArgMatches) -> CliResult {
     let compile_opts =
         args.compile_options(config, mode, Some(&ws), ProfileChecking::LegacyTestOnly)?;
 
+    let registry_src = &config.registry_source_path().into_path_unlocked();
+
+    eprintln!(">> 1st remove `{}`", registry_src.display());
+    std::fs::remove_dir_all(registry_src)?;
+
+    eprintln!(">> 1st `cargo check`");
+    ops::compile(&ws, &compile_opts)?;
+
+    eprintln!(">> 2nd remove `{}`", registry_src.display());
+    std::fs::remove_dir_all(registry_src)?;
+
+    eprintln!(">> 2nd `cargo check`");
     ops::compile(&ws, &compile_opts)?;
     Ok(())
 }
