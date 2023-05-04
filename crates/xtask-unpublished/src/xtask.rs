@@ -1,10 +1,15 @@
 use std::collections::HashSet;
+use std::fmt;
+use std::fmt::Write;
+
 use cargo::core::registry::PackageRegistry;
 use cargo::core::QueryKind;
 use cargo::core::Registry;
 use cargo::core::SourceId;
 use cargo::ops::Packages;
 use cargo::util::command_prelude::*;
+
+type Record = (String, Option<String>, String, bool);
 
 pub fn cli() -> clap::Command {
     clap::Command::new("xtask-unpublished")
@@ -117,46 +122,106 @@ fn unpublished(args: &clap::ArgMatches, config: &mut cargo::util::Config) -> car
                 }
             };
             if let Some(last) = possibilities.iter().map(|s| s.version()).max() {
-                if last != current {
-                    results.push((
-                        name.to_string(),
-                        Some(last.to_string()),
-                        current.to_string(),
-                    ));
-                } else {
-                    log::trace!("{name} {current} is published");
-                }
+                let published = last == current;
+                results.push((
+                    name.to_string(),
+                    Some(last.to_string()),
+                    current.to_string(),
+                    published,
+                ));
             } else {
-                results.push((name.to_string(), None, current.to_string()));
+                results.push((name.to_string(), None, current.to_string(), false));
             }
         }
     }
+    results.sort();
 
-    if !results.is_empty() {
-        results.insert(
-            0,
-            (
-                "name".to_owned(),
-                Some("published".to_owned()),
-                "current".to_owned(),
-            ),
-        );
-        results.insert(
-            1,
-            (
-                "====".to_owned(),
-                Some("=========".to_owned()),
-                "=======".to_owned(),
-            ),
-        );
+    if results.is_empty() {
+        return Ok(());
     }
-    for (name, last, current) in results {
-        if let Some(last) = last {
-            println!("{name} {last} {current}");
-        } else {
-            println!("{name} - {current}");
+
+    output_table(results)?;
+
+    Ok(())
+}
+
+/// Outputs a markdown table of publish status for each members.
+///
+/// ```text
+/// | name                            | crates.io | local  | published? |
+/// | ----                            | --------- | -----  | ---------- |
+/// | cargo                           | 0.70.1    | 0.72.0 | no         |
+/// | cargo-credential                | 0.1.0     | 0.2.0  | no         |
+/// | cargo-credential-1password      | 0.1.0     | 0.2.0  | no         |
+/// | cargo-credential-gnome-secret   | 0.1.0     | 0.2.0  | no         |
+/// | cargo-credential-macos-keychain | 0.1.0     | 0.2.0  | no         |
+/// | cargo-credential-wincred        | 0.1.0     | 0.2.0  | no         |
+/// | cargo-platform                  | 0.1.2     | 0.1.3  | no         |
+/// | cargo-util                      | 0.2.3     | 0.2.4  | no         |
+/// | crates-io                       | 0.36.0    | 0.36.1 | no         |
+/// | home                            | 0.5.5     | 0.5.6  | no         |
+/// ```
+fn output_table(results: Vec<Record>) -> fmt::Result {
+    let mut results: Vec<_> = results
+        .into_iter()
+        .map(|e| {
+            (
+                e.0,
+                e.1.unwrap_or("-".to_owned()),
+                e.2,
+                if e.3 { "yes" } else { "no" }.to_owned(),
+            )
+        })
+        .collect();
+
+    let header = (
+        "name".to_owned(),
+        "crates.io".to_owned(),
+        "local".to_owned(),
+        "published?".to_owned(),
+    );
+    let separators = (
+        "-".repeat(header.0.len()),
+        "-".repeat(header.1.len()),
+        "-".repeat(header.2.len()),
+        "-".repeat(header.3.len()),
+    );
+    results.insert(0, header);
+    results.insert(1, separators);
+
+    let max_col_widths = results
+        .iter()
+        .map(|(name, last, local, bump)| (name.len(), last.len(), local.len(), bump.len()))
+        .reduce(|(c0, c1, c2, c3), (f0, f1, f2, f3)| {
+            (c0.max(f0), c1.max(f1), c2.max(f2), c3.max(f3))
+        })
+        .unwrap();
+
+    let print_space = |out: &mut dyn Write, n| {
+        for _ in 0..(n + 1) {
+            write!(out, " ")?;
         }
+        fmt::Result::Ok(())
+    };
+
+    let out = &mut String::new();
+    for (name, last, local, bump) in results {
+        write!(out, "| {name}")?;
+        print_space(out, max_col_widths.0 - name.len())?;
+
+        write!(out, "| {last}")?;
+        print_space(out, max_col_widths.1 - last.len())?;
+
+        write!(out, "| {local}")?;
+        print_space(out, max_col_widths.2 - local.len())?;
+
+        write!(out, "| {bump}")?;
+        print_space(out, max_col_widths.3 - bump.len())?;
+
+        writeln!(out, "|")?;
     }
+
+    println!("{out}");
 
     Ok(())
 }
