@@ -5,12 +5,13 @@
 # In the future, we could take SemVer compatibliity into account, like
 # integrating `cargo-semver-checks` of else
 #
-# NOTE: This script assumes it is run against a pull request.
+# Inputs:
+#     PULL_REQUEST_URL    A pull request url on GitHub.
 
 set -euo pipefail
 
 changed_crates=$(
-  gh pr view \
+  gh pr view $PULL_REQUEST_URL \
     --json files \
     -q '.files[].path | match("^(crates|credential|benches)/(.*?)/") | .captures[1].string' \
     | sort -u
@@ -33,6 +34,6 @@ fi
 
 echo "$output"
 
-gh pr comment -- body "$output"
+gh pr comment $PULL_REQUEST_URL --body "$output"
 
 exit 1
