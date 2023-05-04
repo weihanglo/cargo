@@ -13,6 +13,10 @@ type Record = (String, Option<String>, String, bool);
 
 pub fn cli() -> clap::Command {
     clap::Command::new("xtask-unpublished")
+        .arg(flag(
+            "check-version-bump",
+            "check if any version bump is needed",
+        ))
         .arg_package_spec_simple("Package to inspect the published status")
         .arg(
             opt(
@@ -140,7 +144,13 @@ fn unpublished(args: &clap::ArgMatches, config: &mut cargo::util::Config) -> car
         return Ok(());
     }
 
-    output_table(results)?;
+    let check_version_bump = args.flag("check-version-bump");
+
+    if check_version_bump {
+        output_version_bump_notice(&results);
+    }
+
+    output_table(results, check_version_bump)?;
 
     Ok(())
 }
@@ -161,9 +171,10 @@ fn unpublished(args: &clap::ArgMatches, config: &mut cargo::util::Config) -> car
 /// | crates-io                       | 0.36.0    | 0.36.1 | no         |
 /// | home                            | 0.5.5     | 0.5.6  | no         |
 /// ```
-fn output_table(results: Vec<Record>) -> fmt::Result {
+fn output_table(results: Vec<Record>, check_version_bump: bool) -> fmt::Result {
     let mut results: Vec<_> = results
         .into_iter()
+        .filter(|(.., published)| !check_version_bump || *published)
         .map(|e| {
             (
                 e.0,
@@ -174,11 +185,20 @@ fn output_table(results: Vec<Record>) -> fmt::Result {
         })
         .collect();
 
+    if results.is_empty() {
+        return Ok(());
+    }
+
     let header = (
         "name".to_owned(),
         "crates.io".to_owned(),
         "local".to_owned(),
-        "published?".to_owned(),
+        if check_version_bump {
+            "need version bump?"
+        } else {
+            "published?"
+        }
+        .to_owned(),
     );
     let separators = (
         "-".repeat(header.0.len()),
@@ -224,6 +244,22 @@ fn output_table(results: Vec<Record>) -> fmt::Result {
     println!("{out}");
 
     Ok(())
+}
+
+fn output_version_bump_notice(results: &[Record]) {
+    let pkgs_need_bump = results
+        .iter()
+        .filter_map(|(name, .., published)| published.then_some(name.clone()))
+        .collect::<Vec<_>>();
+
+    if !pkgs_need_bump.is_empty() {
+        print!("### :warning: ");
+        println!("Require at least a patch version bump for each of the following packages:\n");
+        for pkg in pkgs_need_bump {
+            println!("* {pkg}");
+        }
+        println!()
+    }
 }
 
 #[test]
