@@ -43,6 +43,16 @@ jobs:
       - run: rustup update stable && rustup default stable
       - run: cargo stale-label
 
+  check-version-bump:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - uses: actions/checkout@v3
+    - run: rustup update stable && rustup default stable
+    - run: ci/validate-version-bump.sh
+
   # Ensure Cargo.lock is up-to-date
   lockfile:
     runs-on: ubuntu-latest
