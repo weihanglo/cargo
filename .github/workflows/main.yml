@@ -43,6 +43,18 @@ jobs:
       - run: rustup update stable && rustup default stable
       - run: cargo stale-label
 
+  check-version-bump:
+    runs-on: ubuntu-latest
+    env:
+      BASE_SHA : ${{ github.event.pull_request.base.sha }}
+      COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # make `git diff` work
+      - run: rustup update stable && rustup default stable
+      - run: ci/validate-version-bump.sh
+
   # Ensure Cargo.lock is up-to-date
   lockfile:
     runs-on: ubuntu-latest
@@ -213,6 +225,7 @@ jobs:
     name: bors build finished
     needs:
     - build_std
+    - check-version-bump
     - docs
     - lockfile
     - resolver
@@ -229,6 +242,7 @@ jobs:
     name: bors build finished
     needs:
     - build_std
+    - check-version-bump
     - docs
     - lockfile
     - resolver
