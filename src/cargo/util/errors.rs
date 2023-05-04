@@ -327,6 +327,12 @@ impl From<std::io::Error> for CliError {
     }
 }
 
+impl From<std::fmt::Error> for CliError {
+    fn from(err: std::fmt::Error) -> CliError {
+        CliError::new(err.into(), 1)
+    }
+}
+
 // =============================================================================
 // Construction helpers
 
