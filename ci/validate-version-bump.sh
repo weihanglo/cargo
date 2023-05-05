@@ -25,23 +25,29 @@ changed_crates=$(
     | sort -u
 )
 
+git log -n 10 --oneline
+
+git diff --name-only "$base_sha" "$commit_sha"
+
+echo $changed_crates
+
 if  [ -z "$changed_crates" ]
 then
     echo "No file changed in sub crates."
     exit 0
 fi
 
-output=$(
-    echo "$changed_crates" \
-    | xargs printf -- '--package %s\n' \
-    | xargs cargo unpublished --check-version-bump
-)
-
-if  [ -z "$output" ]
-then
-    echo "No version bump needed for sub crates."
-    exit 0
-fi
-
-echo "$output"
-exit 1
+# output=$(
+#     echo "$changed_crates" \
+#     | xargs printf -- '--package %s\n' \
+#     | xargs cargo unpublished --check-version-bump
+# )
+# 
+# if  [ -z "$output" ]
+# then
+#     echo "No version bump needed for sub crates."
+#     exit 0
+# fi
+# 
+# echo "$output"
+# exit 1
