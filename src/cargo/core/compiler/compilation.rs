@@ -248,6 +248,7 @@ impl<'cfg> Compilation<'cfg> {
         kind: CompileKind,
         pkg: &Package,
         script_meta: Option<Metadata>,
+        jobserver_client: Option<&jobserver::Client>,
     ) -> CargoResult<ProcessBuilder> {
         let builder = if let Some((runner, args)) = self.target_runner(kind) {
             let mut builder = ProcessBuilder::new(runner);
@@ -257,7 +258,13 @@ impl<'cfg> Compilation<'cfg> {
         } else {
             ProcessBuilder::new(cmd)
         };
-        self.fill_env(builder, pkg, script_meta, kind, false)
+        let mut builder = self.fill_env(builder, pkg, script_meta, kind, false)?;
+
+        if let Some(client) = jobserver_client {
+            builder.inherit_jobserver(client);
+        }
+
+        Ok(builder)
     }
 
     /// Prepares a new process with an appropriate environment to run against
