@@ -370,7 +370,13 @@ fn cmd_builds(
         ),
     };
 
-    let mut cmd = compilation.target_process(path, unit.kind, &unit.pkg, *script_meta)?;
+    let mut cmd = compilation.target_process(
+        path,
+        unit.kind,
+        &unit.pkg,
+        *script_meta,
+        config.jobserver_from_env(),
+    )?;
     cmd.args(test_args);
     if unit.target.harness() && config.shell().verbosity() == Verbosity::Quiet {
         cmd.arg("--quiet");

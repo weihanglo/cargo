@@ -92,7 +92,13 @@ pub fn run(
         Err(_) => path.to_path_buf(),
     };
     let pkg = bins[0].0;
-    let mut process = compile.target_process(exe, unit.kind, pkg, *script_meta)?;
+    let mut process = compile.target_process(
+        exe,
+        unit.kind,
+        pkg,
+        *script_meta,
+        config.jobserver_from_env(),
+    )?;
 
     // Sets the working directory of the child process to the current working
     // directory of the parent process.
