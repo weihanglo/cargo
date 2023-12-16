@@ -71,7 +71,7 @@
 //! __CARGO_DEFAULT_LIB_METADATA[^4]           |             | ✓
 //! package_id                                 |             | ✓
 //! authors, description, homepage, repo       | ✓           |
-//! Target src path relative to ws             | ✓           |
+//! Target src path relative to ws/CARGO_HOME  | ✓           |
 //! Target flags (test/bench/for_host/edition) | ✓           |
 //! -C incremental=… flag                      | ✓           |
 //! mtime of sources                           | ✓[^3]       |
@@ -1450,9 +1450,16 @@ fn calculate_normal(cx: &mut Context<'_, '_>, unit: &Unit) -> CargoResult<Finger
         rustc: util::hash_u64(&cx.bcx.rustc().verbose_version),
         target: util::hash_u64(&unit.target),
         profile: profile_hash,
-        // Note that .0 is hashed here, not .1 which is the cwd. That doesn't
-        // actually affect the output artifact so there's no need to hash it.
-        path: util::hash_u64(path_args(cx.bcx.ws, unit).0),
+        path: {
+            // Note that .0 is hashed here, not .1 which is the cwd. That doesn't
+            // actually affect the output artifact so there's no need to hash it.
+            let src_path = path_args(cx.bcx.ws, unit).0;
+            let home_path = cx.bcx.config.home().as_path_unlocked();
+            let src_path = src_path
+                .strip_prefix(home_path)
+                .unwrap_or(src_path.as_path());
+            util::hash_u64(src_path)
+        },
         features: format!("{:?}", unit.features),
         // Note we curently only populate `declared_features` when `-Zcheck-cfg`
         // is passed since it's the only user-facing toggle that will make this
