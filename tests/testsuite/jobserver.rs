@@ -136,7 +136,7 @@ fn runner_inherits_jobserver() {
     assert!(runner_bin.is_file());
 
     let host = rustc_host();
-    let config_value = &format!("target.{host}.runner = \"{}\"", runner_bin.display());
+    let config_value = &format!("target.{host}.runner = '{}'", runner_bin.display());
 
     let name = "cargo-jobserver-check";
     let p = project()
@@ -168,13 +168,13 @@ run:
 \t+$(CARGO) run
 
 run-runner:
-\t+$(CARGO) run --config '{config_value}'
+\t+$(CARGO) run --config \"{config_value}\"
 
 test:
 \t+$(CARGO) test --lib
 
 test-runner:
-\t+$(CARGO) test --lib --config '{config_value}'
+\t+$(CARGO) test --lib --config \"{config_value}\"
 ",
             ),
         )
