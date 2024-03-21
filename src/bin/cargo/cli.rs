@@ -284,6 +284,27 @@ fn expand_aliases(
         let aliased_cmd = super::aliased_command(gctx, cmd);
 
         match (exec, aliased_cmd) {
+            (Some(_), Ok(Some(alias))) if cmd == &alias[0] => {
+                // Allow alias to shadow built-in commands iff the alias invokes
+                // that shadowed built-in.
+                let alias = alias
+                    .into_iter()
+                    .map(|s| OsString::from(s))
+                    .chain(
+                        sub_args
+                            .get_many::<OsString>("")
+                            .unwrap_or_default()
+                            .cloned(),
+                    )
+                    .collect::<Vec<_>>();
+                // new_args strips out everything before the subcommand, so
+                // capture those global options now.
+                // Note that an alias to an external command will not receive
+                // these arguments. That may be confusing, but such is life.
+                let global_args = GlobalArgs::new(sub_args);
+                let new_args = cli(gctx).no_binary_name(true).try_get_matches_from(alias)?;
+                return Ok((new_args, global_args));
+            }
             (Some(_), Ok(Some(_))) => {
                 // User alias conflicts with a built-in subcommand
                 gctx.shell().warn(format!(

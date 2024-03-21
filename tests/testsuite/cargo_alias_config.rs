@@ -262,8 +262,8 @@ error: alias test-1 has unresolvable recursive definition: test-1 -> echo -> ech
     p.cargo("build")
         .with_stderr(
             "\
-[WARNING] user-defined alias `build` is ignored, because it is shadowed by a built-in command
 [COMPILING] foo v0.5.0 ([..])
+[RUNNING] `rustc --crate-name[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [..]
 ",
         )
