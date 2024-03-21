@@ -339,16 +339,16 @@ For more information, see issue #12207 <https://github.com/rust-lang/cargo/issue
                     }
                 }
 
-                let mut alias = alias
+                let alias = alias
                     .into_iter()
                     .map(|s| OsString::from(s))
+                    .chain(
+                        sub_args
+                            .get_many::<OsString>("")
+                            .unwrap_or_default()
+                            .cloned(),
+                    )
                     .collect::<Vec<_>>();
-                alias.extend(
-                    sub_args
-                        .get_many::<OsString>("")
-                        .unwrap_or_default()
-                        .cloned(),
-                );
                 // new_args strips out everything before the subcommand, so
                 // capture those global options now.
                 // Note that an alias to an external command will not receive
