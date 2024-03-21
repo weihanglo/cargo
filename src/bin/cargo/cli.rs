@@ -285,8 +285,8 @@ fn expand_aliases(
 
         match (exec, aliased_cmd) {
             (Some(_), Ok(Some(alias))) if cmd == &alias[0] => {
-                // Allow alias to shadow built-in commands iff the alias invokes
-                // that shadowed built-in.
+                // Allow user alias to shadow a built-in command
+                // if it invokes that shadowed command also.
                 let alias = alias
                     .into_iter()
                     .map(|s| OsString::from(s))
@@ -337,14 +337,35 @@ To pass the arguments to the subcommand, remove `--`",
                 // a hard error.
                 if super::builtin_aliases_execs(cmd).is_none() {
                     if let Some(path) = super::find_external_subcommand(gctx, cmd) {
-                        gctx.shell().warn(format!(
-                        "\
-user-defined alias `{}` is shadowing an external subcommand found at: `{}`
+                        if cmd == &alias[0] {
+                            // Allow user alias to shadow a external command
+                            // if it invokes that shadowed command also.
+                            let alias = alias
+                                .into_iter()
+                                .map(|s| OsString::from(s))
+                                .chain(
+                                    sub_args
+                                        .get_many::<OsString>("")
+                                        .unwrap_or_default()
+                                        .cloned(),
+                                )
+                                .collect::<Vec<_>>();
+                            // new_args strips out everything before the subcommand, so
+                            // capture those global options now.
+                            // Note that an alias to an external command will not receive
+                            // these arguments. That may be confusing, but such is life.
+                            let global_args = GlobalArgs::new(sub_args);
+                            let new_args =
+                                cli(gctx).no_binary_name(true).try_get_matches_from(alias)?;
+                            return Ok((new_args, global_args));
+                        } else {
+                            let path = path.display();
+                            let msg = format!("\
+user-defined alias `{cmd}` is shadowing an external subcommand found at: `{path}`
 This was previously accepted but is being phased out; it will become a hard error in a future release.
-For more information, see issue #10049 <https://github.com/rust-lang/cargo/issues/10049>.",
-                        cmd,
-                        path.display(),
-                    ))?;
+For more information, see issue #10049 <https://github.com/rust-lang/cargo/issues/10049>.");
+                            gctx.shell().warn(msg)?;
+                        }
                     }
                 }
                 if commands::run::is_manifest_command(cmd) {
