@@ -216,6 +216,7 @@ fn default_args_alias() {
                 echo = "echo --flag1 --flag2"
                 test-1 = "echo"
                 build = "build --verbose"
+                check = "version --verbose"
             "#,
         )
         .build();
@@ -249,6 +250,15 @@ error: alias test-1 has unresolvable recursive definition: test-1 -> echo -> ech
         .run();
 
     // Builtins are not expanded by rule
+    p.cargo("check")
+        .with_stderr(
+            "\
+[WARNING] user-defined alias `check` is ignored, because it is shadowed by a built-in command
+[CHECKING] foo v0.5.0 ([..])
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [..]
+",
+        )
+        .run();
     p.cargo("build")
         .with_stderr(
             "\
