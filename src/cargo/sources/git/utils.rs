@@ -310,18 +310,6 @@ impl<'a> GitCheckout<'a> {
                 .with_checkout(checkout)
                 .fetch_options(fopts)
                 .clone(url.as_str(), into)?;
-            // `git2` doesn't seem to handle shallow repos correctly when doing
-            // a local clone. Fortunately all that's needed is the copy of the
-            // one file that defines the shallow boundary, the commits which
-            // have their parents omitted as part of the shallow clone.
-            //
-            // TODO(git2): remove this when git2 supports shallow clone correctly
-            if database.repo.is_shallow() {
-                std::fs::copy(
-                    database.repo.path().join("shallow"),
-                    r.path().join("shallow"),
-                )?;
-            }
             repo = Some(r);
             Ok(())
         })?;
