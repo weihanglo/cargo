@@ -732,6 +732,12 @@ pub struct TomlDetailedDependency<P: Clone = String> {
     #[serde(rename = "default_features")]
     pub default_features2: Option<bool>,
     pub package: Option<PackageName>,
+    /// `patches = [<path>, ...]` for specifying patch files (unstable).
+    ///
+    /// Paths of patches are relative to the file it appears in.
+    /// If that's a `Cargo.toml`, they'll be relative to that TOML file,
+    /// and if it's a `.cargo/config.toml` file, they'll berelative to that file.
+    pub patches: Option<Vec<P>>,
     pub public: Option<bool>,
 
     /// One or more of `bin`, `cdylib`, `staticlib`, `bin:<name>`.
@@ -770,6 +776,7 @@ impl<P: Clone> Default for TomlDetailedDependency<P> {
             default_features: Default::default(),
             default_features2: Default::default(),
             package: Default::default(),
+            patches: Default::default(),
             public: Default::default(),
             artifact: Default::default(),
             lib: Default::default(),
