@@ -1,7 +1,11 @@
 //! Tests for unstable `patch-files` feature.
 
-use cargo_test_support::registry::Package;
+use cargo_test_support::basic_manifest;
+use cargo_test_support::git;
+use cargo_test_support::paths;
 use cargo_test_support::project;
+use cargo_test_support::registry;
+use cargo_test_support::registry::Package;
 
 #[cargo_test]
 fn gated_manifest() {
@@ -112,6 +116,200 @@ fn warn_if_in_normal_dep() {
 [CHECKING] bar v1.0.0
 [CHECKING] foo v0.0.0 ([CWD])
 [FINISHED] `dev` profile [..]
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn disallow_non_exact_version() {
+    Package::new("bar", "1.0.0").publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["patch-files"]
+
+                [package]
+                name = "foo"
+                edition = "2015"
+
+                [dependencies]
+                bar = "1"
+
+                [patch.crates-io]
+                bar = { version = "1.0.0", patches = [] }
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("check")
+        .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_status(101)
+        .with_stderr(
+            "\
+[ERROR] failed to parse manifest at `[..]`
+
+Caused by:
+  patch for `bar` in `[..]` requires an exact version when patching with patch files
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn disallow_empty_patches_array() {
+    Package::new("bar", "1.0.0").publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["patch-files"]
+
+                [package]
+                name = "foo"
+                edition = "2015"
+
+                [dependencies]
+                bar = "1"
+
+                [patch.crates-io]
+                bar = { version = "=1.0.0", patches = [] }
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("check")
+        .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_status(101)
+        .with_stderr(
+            "\
+[ERROR] failed to parse manifest at `[..]`
+
+Caused by:
+  patch for `bar` in `[..]` requires at least one patch file when patching with patch files
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn disallow_mismatched_source_url() {
+    registry::alt_init();
+    Package::new("bar", "1.0.0").alternative(true).publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["patch-files"]
+
+                [package]
+                name = "foo"
+                edition = "2015"
+
+                [dependencies]
+                bar = "1"
+
+                [patch.crates-io]
+                bar = { version = "=1.0.0", registry = "alternative", patches = [] }
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("check")
+        .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_status(101)
+        .with_stderr(
+            "\
+[ERROR] failed to parse manifest at `[..]`
+
+Caused by:
+  patch for `bar` in `[..]` must refer to the same source when patching with patch files
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn disallow_path_dep() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["patch-files"]
+
+                [package]
+                name = "foo"
+                edition = "2015"
+
+                [dependencies]
+                bar = "1"
+
+                [patch.crates-io]
+                bar = { path = "bar", patches = [""] }
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .file("bar/Cargo.toml", &basic_manifest("bar", "1.0.0"))
+        .file("bar/src/lib.rs", "")
+        .build();
+
+    p.cargo("check")
+        .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_status(101)
+        .with_stderr(
+            "\
+[ERROR] failed to parse manifest at `[..]`
+
+Caused by:
+  patch for `bar` in `[..]` requires a registry source when patching with patch files
+",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn disallow_git_dep() {
+    let git = git::repo(&paths::root().join("bar"))
+        .file("Cargo.toml", &basic_manifest("bar", "1.0.0"))
+        .file("src/lib.rs", "")
+        .build();
+    let url = git.url();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            &format!(
+                r#"
+                cargo-features = ["patch-files"]
+
+                [package]
+                name = "foo"
+                edition = "2015"
+
+                [dependencies]
+                bar = "1"
+
+                [patch.crates-io]
+                bar = {{ git = "{url}", patches = [""] }}
+                "#
+            ),
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("check")
+        .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_status(101)
+        .with_stderr(
+            "\
+[ERROR] failed to parse manifest at `[..]`
+
+Caused by:
+  patch for `bar` in `[..]` requires a registry source when patching with patch files
 ",
         )
         .run();
