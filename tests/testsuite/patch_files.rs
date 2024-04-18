@@ -926,3 +926,155 @@ source = "patched+registry+https://github.com/rust-lang/crates.io-index?name=bar
 "#;
     assert_match_exact(expected, &actual);
 }
+
+#[cargo_test(requires_patch)]
+fn cargo_metadata() {
+    let p = patched_project();
+
+    p.cargo("generate-lockfile")
+        .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_stderr(
+            "\
+[UPDATING] `dummy-registry` index
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[LOCKING] [..]
+",
+        )
+        .run();
+
+    p.cargo("metadata")
+        .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_json(
+            r#"
+{
+  "packages": [
+    {
+      "name": "bar",
+      "version": "1.0.0",
+      "id": "patched+registry+https://github.com/rust-lang/crates.io-index?name=bar&version=1.0.0&patch=patches%2Fhello.patch#bar@1.0.0",
+      "license": null,
+      "license_file": null,
+      "description": null,
+      "source": "patched+registry+https://github.com/rust-lang/crates.io-index?name=bar&version=1.0.0&patch=patches%2Fhello.patch",
+      "dependencies": [],
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "crate_types": [
+            "lib"
+          ],
+          "name": "bar",
+          "src_path": "[..]/.cargo/patched-src/github.com-[..]/bar-1.0.0/[..]/src/lib.rs",
+          "edition": "2015",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        }
+      ],
+      "features": {},
+      "manifest_path": "[..]/.cargo/patched-src/github.com-[..]/bar-1.0.0/[..]/Cargo.toml",
+      "metadata": null,
+      "publish": null,
+      "authors": [],
+      "categories": [],
+      "keywords": [],
+      "readme": null,
+      "repository": null,
+      "homepage": null,
+      "documentation": null,
+      "edition": "2015",
+      "links": null,
+      "default_run": null,
+      "rust_version": null
+    },
+    {
+      "name": "foo",
+      "version": "0.0.0",
+      "id": "[..]",
+      "license": null,
+      "license_file": null,
+      "description": null,
+      "source": null,
+      "dependencies": "{...}",
+      "targets": "{...}",
+      "features": {},
+      "manifest_path": "[..]",
+      "metadata": null,
+      "publish": [],
+      "authors": [],
+      "categories": [],
+      "keywords": [],
+      "readme": null,
+      "repository": null,
+      "homepage": null,
+      "documentation": null,
+      "edition": "2015",
+      "links": null,
+      "default_run": null,
+      "rust_version": null
+    }
+  ],
+  "workspace_members": "{...}",
+  "workspace_default_members": "{...}",
+  "resolve": {
+    "nodes": [
+      {
+        "id": "patched+registry+https://github.com/rust-lang/crates.io-index?name=bar&version=1.0.0&patch=patches%2Fhello.patch#bar@1.0.0",
+        "dependencies": [],
+        "deps": [],
+        "features": []
+      },
+      {
+        "id": "[..]foo#0.0.0",
+        "dependencies": [
+          "patched+registry+https://github.com/rust-lang/crates.io-index?name=bar&version=1.0.0&patch=patches%2Fhello.patch#bar@1.0.0"
+        ],
+        "deps": [
+          {
+            "name": "bar",
+            "pkg": "patched+registry+https://github.com/rust-lang/crates.io-index?name=bar&version=1.0.0&patch=patches%2Fhello.patch#bar@1.0.0",
+            "dep_kinds": "{...}"
+          }
+        ],
+        "features": []
+      }
+    ],
+    "root": "[..]"
+  },
+  "target_directory": "[..]",
+  "version": 1,
+  "workspace_root": "[..]",
+  "metadata": null
+}
+            "#,
+        )
+
+        .run();
+}
+
+#[cargo_test(requires_patch)]
+fn cargo_pkgid() {
+    let p = patched_project();
+
+    p.cargo("generate-lockfile")
+        .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_stderr(
+            "\
+[UPDATING] `dummy-registry` index
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[LOCKING] [..]
+",
+        )
+        .run();
+
+    p.cargo("pkgid bar")
+        .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_stdout("patched+registry+https://github.com/rust-lang/crates.io-index?name=bar&version=1.0.0&patch=patches%2Fhello.patch#bar@1.0.0")
+        .run();
+}
