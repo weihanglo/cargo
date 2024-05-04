@@ -256,9 +256,12 @@ impl<'a, 'gctx> BuildRunner<'a, 'gctx> {
                             args.push(cfg.into());
                         }
 
-                        for check_cfg in &output.check_cfgs {
-                            args.push("--check-cfg".into());
-                            args.push(check_cfg.into());
+                        if !output.check_cfgs.is_empty() {
+                            args.push("-Zunstable-options".into());
+                            for check_cfg in &output.check_cfgs {
+                                args.push("--check-cfg".into());
+                                args.push(check_cfg.into());
+                            }
                         }
 
                         for (lt, arg) in &output.linker_args {

@@ -1,4 +1,4 @@
-//! Tests for Cargo usage of rustc `--check-cfg`.
+//! Tests for -Zcheck-cfg.
 
 use cargo_test_support::{basic_manifest, project};
 
@@ -29,7 +29,7 @@ macro_rules! x {
     }};
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn features() {
     let p = project()
         .file(
@@ -48,14 +48,14 @@ fn features() {
         .file("src/main.rs", "fn main() {}")
         .build();
 
-    p.cargo("check -v")
+    p.cargo("check -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustc" => "cfg" of "feature" with "f_a" "f_b"))
         .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
-        .with_stderr_does_not_contain("[..]-Zunstable-options[..]")
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn features_with_deps() {
     let p = project()
         .file(
@@ -79,13 +79,14 @@ fn features_with_deps() {
         .file("bar/src/lib.rs", "#[allow(dead_code)] fn bar() {}")
         .build();
 
-    p.cargo("check -v")
+    p.cargo("check -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustc" => "cfg" of "feature" with "f_a" "f_b"))
         .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn features_with_opt_deps() {
     let p = project()
         .file(
@@ -110,13 +111,14 @@ fn features_with_opt_deps() {
         .file("bar/src/lib.rs", "#[allow(dead_code)] fn bar() {}")
         .build();
 
-    p.cargo("check -v")
+    p.cargo("check -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustc" => "cfg" of "feature" with "bar" "default" "f_a" "f_b"))
         .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn features_with_namespaced_features() {
     let p = project()
         .file(
@@ -140,13 +142,14 @@ fn features_with_namespaced_features() {
         .file("bar/src/lib.rs", "#[allow(dead_code)] fn bar() {}")
         .build();
 
-    p.cargo("check -v")
+    p.cargo("check -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustc" => "cfg" of "feature" with "f_a" "f_b"))
         .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn features_fingerprint() {
     let p = project()
         .file(
@@ -165,12 +168,14 @@ fn features_fingerprint() {
         .file("src/lib.rs", "#[cfg(feature = \"f_b\")] fn entry() {}")
         .build();
 
-    p.cargo("check -v")
+    p.cargo("check -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustc" => "cfg" of "feature" with "f_a" "f_b"))
         .with_stderr_does_not_contain("[..]unexpected_cfgs[..]")
         .run();
 
-    p.cargo("check -v")
+    p.cargo("check -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_does_not_contain("[..]rustc[..]")
         .run();
 
@@ -189,7 +194,8 @@ fn features_fingerprint() {
         "#,
     );
 
-    p.cargo("check -v")
+    p.cargo("check -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_does_not_contain("[..]rustc[..]")
         .run();
 
@@ -206,7 +212,8 @@ fn features_fingerprint() {
         "#,
     );
 
-    p.cargo("check -v")
+    p.cargo("check -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         // we check that the fingerprint is indeed dirty
         .with_stderr_contains("[..]Dirty[..]the list of declared features changed")
         // that is cause rustc to be called again with the new check-cfg args
@@ -216,20 +223,21 @@ fn features_fingerprint() {
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn well_known_names_values() {
     let p = project()
         .file("Cargo.toml", &basic_manifest("foo", "0.1.0"))
         .file("src/main.rs", "fn main() {}")
         .build();
 
-    p.cargo("check -v")
+    p.cargo("check -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustc" => "cfg" of "feature" with))
         .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn features_test() {
     let p = project()
         .file(
@@ -248,13 +256,14 @@ fn features_test() {
         .file("src/main.rs", "fn main() {}")
         .build();
 
-    p.cargo("test -v")
+    p.cargo("test -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustc" => "cfg" of "feature" with "f_a" "f_b"))
         .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn features_doctest() {
     let p = project()
         .file(
@@ -274,36 +283,38 @@ fn features_doctest() {
         .file("src/lib.rs", "#[allow(dead_code)] fn foo() {}")
         .build();
 
-    p.cargo("test -v --doc")
+    p.cargo("test -v --doc -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustc" => "cfg" of "feature" with "default" "f_a" "f_b"))
         .with_stderr_contains(x!("rustdoc" => "cfg" of "feature" with "default" "f_a" "f_b"))
         .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
         .with_stderr_contains(x!("rustdoc" => "cfg" of "docsrs"))
-        .with_stderr_does_not_contain("[..]-Zunstable-options[..]")
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn well_known_names_values_test() {
     let p = project()
         .file("Cargo.toml", &basic_manifest("foo", "0.1.0"))
         .file("src/main.rs", "fn main() {}")
         .build();
 
-    p.cargo("test -v")
+    p.cargo("test -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustc" => "cfg" of "feature" with))
         .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn well_known_names_values_doctest() {
     let p = project()
         .file("Cargo.toml", &basic_manifest("foo", "0.1.0"))
         .file("src/lib.rs", "#[allow(dead_code)] fn foo() {}")
         .build();
 
-    p.cargo("test -v --doc")
+    p.cargo("test -v --doc -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustc" => "cfg" of "feature" with))
         .with_stderr_contains(x!("rustdoc" => "cfg" of "feature" with))
         .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
@@ -311,7 +322,7 @@ fn well_known_names_values_doctest() {
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn features_doc() {
     let p = project()
         .file(
@@ -331,14 +342,14 @@ fn features_doc() {
         .file("src/lib.rs", "#[allow(dead_code)] fn foo() {}")
         .build();
 
-    p.cargo("doc -v")
+    p.cargo("doc -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustdoc" => "cfg" of "feature" with "default" "f_a" "f_b"))
         .with_stderr_contains(x!("rustdoc" => "cfg" of "docsrs"))
-        .with_stderr_does_not_contain("[..]-Zunstable-options[..]")
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn build_script_feedback() {
     let p = project()
         .file(
@@ -359,14 +370,14 @@ fn build_script_feedback() {
         )
         .build();
 
-    p.cargo("check -v")
+    p.cargo("check -v -Zcheck-cfg")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .with_stderr_contains(x!("rustc" => "cfg" of "foo"))
         .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
-        .with_stderr_does_not_contain("[..]-Zunstable-options[..]")
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn build_script_doc() {
     let p = project()
         .file(
@@ -387,7 +398,7 @@ fn build_script_doc() {
         )
         .build();
 
-    p.cargo("doc -v")
+    p.cargo("doc -v -Zcheck-cfg")
         .with_stderr_does_not_contain("rustc [..] --check-cfg [..]")
         .with_stderr_contains(x!("rustdoc" => "cfg" of "foo"))
         .with_stderr(
@@ -401,10 +412,11 @@ fn build_script_doc() {
 [GENERATED] [CWD]/target/doc/foo/index.html
 ",
         )
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn build_script_override() {
     let target = cargo_test_support::rustc_host();
 
@@ -435,14 +447,49 @@ fn build_script_override() {
         )
         .build();
 
-    p.cargo("check -v")
+    p.cargo("check -v -Zcheck-cfg")
         .with_stderr_contains(x!("rustc" => "cfg" of "foo"))
         .with_stderr_contains(x!("rustc" => "cfg" of "feature" with))
         .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
+        .masquerade_as_nightly_cargo(&["check-cfg"])
         .run();
 }
 
-#[cargo_test(>=1.79, reason = "--check-cfg was stabilized in Rust 1.79")]
+#[cargo_test]
+fn build_script_override_feature_gate() {
+    let target = cargo_test_support::rustc_host();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2015"
+                links = "a"
+            "#,
+        )
+        .file("src/main.rs", "fn main() {}")
+        .file("build.rs", "fn main() {}")
+        .file(
+            ".cargo/config.toml",
+            &format!(
+                r#"
+                    [target.{}.a]
+                    rustc-check-cfg = ["cfg(foo)"]
+                "#,
+                target
+            ),
+        )
+        .build();
+
+    p.cargo("check")
+        .with_stderr_does_not_contain("warning: [..]rustc-check-cfg[..]")
+        .run();
+}
+
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
 fn build_script_test() {
     let p = project()
         .file(
@@ -488,11 +535,133 @@ fn build_script_test() {
         .file("tests/test.rs", "#[cfg(foo)] #[test] fn test_bar() {}")
         .build();
 
-    p.cargo("test -v")
+    p.cargo("test -v -Zcheck-cfg")
         .with_stderr_contains(x!("rustc" => "cfg" of "foo"))
         .with_stderr_contains(x!("rustdoc" => "cfg" of "foo"))
         .with_stdout_contains("test test_foo ... ok")
         .with_stdout_contains("test test_bar ... ok")
         .with_stdout_contains_n("test [..] ... ok", 3)
+        .masquerade_as_nightly_cargo(&["check-cfg"])
+        .run();
+}
+
+#[cargo_test]
+fn build_script_feature_gate() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.0.1"
+                edition = "2015"
+                build = "build.rs"
+            "#,
+        )
+        .file(
+            "build.rs",
+            r#"fn main() {
+                println!("cargo::rustc-check-cfg=cfg(foo)");
+                println!("cargo::rustc-cfg=foo");
+            }"#,
+        )
+        .file("src/main.rs", "fn main() {}")
+        .build();
+
+    p.cargo("check")
+        .with_stderr_does_not_contain("warning: [..]rustc-check-cfg[..]")
+        .with_status(0)
+        .run();
+}
+
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
+fn config_valid() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2015"
+
+                [features]
+                f_a = []
+                f_b = []
+            "#,
+        )
+        .file("src/main.rs", "fn main() {}")
+        .file(
+            ".cargo/config.toml",
+            r#"
+                [unstable]
+                check-cfg = true
+            "#,
+        )
+        .build();
+
+    p.cargo("check -v")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
+        .with_stderr_contains(x!("rustc" => "cfg" of "feature" with "f_a" "f_b"))
+        .with_stderr_contains(x!("rustc" => "cfg" of "docsrs"))
+        .run();
+}
+
+#[cargo_test(nightly, reason = "--check-cfg is unstable")]
+fn config_invalid() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2015"
+            "#,
+        )
+        .file("src/main.rs", "fn main() {}")
+        .file(
+            ".cargo/config.toml",
+            r#"
+                [unstable]
+                check-cfg = ["va"]
+            "#,
+        )
+        .build();
+
+    p.cargo("check")
+        .masquerade_as_nightly_cargo(&["check-cfg"])
+        .with_stderr_contains("error:[..]`unstable.check-cfg` expected true/false[..]")
+        .with_status(101)
+        .run();
+}
+
+#[cargo_test]
+fn config_feature_gate() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2015"
+
+                [features]
+                f_a = []
+            "#,
+        )
+        .file("src/main.rs", "fn main() {}")
+        .file(
+            ".cargo/config.toml",
+            r#"
+                [unstable]
+                check-cfg = true
+            "#,
+        )
+        .build();
+
+    p.cargo("check -v")
+        .with_stderr_does_not_contain("--check-cfg")
         .run();
 }

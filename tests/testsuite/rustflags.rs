@@ -1530,7 +1530,6 @@ fn two_matching_in_config() {
         .file(
             "src/main.rs",
             r#"
-                #![allow(unexpected_cfgs)]
                 fn main() {
                     if cfg!(foo = "a") {
                         println!("a");
