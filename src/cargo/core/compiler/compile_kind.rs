@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 /// Indicator for how a unit is being compiled.
@@ -195,6 +195,6 @@ impl CompileTarget {
                 self.name.hash(&mut hasher);
             }
         }
-        hasher.finish()
+        Hasher::finish(&hasher)
     }
 }

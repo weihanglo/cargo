@@ -36,7 +36,7 @@
 //! ["Cargo Target"]: https://doc.rust-lang.org/nightly/cargo/reference/cargo-targets.html
 
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::core::compiler::unit_dependencies::build_unit_dependencies;
@@ -648,7 +648,7 @@ fn traverse_and_share(
         .collect();
     // Here, we have recursively traversed this unit's dependencies, and hashed them: we can
     // finalize the dep hash.
-    let new_dep_hash = dep_hash.finish();
+    let new_dep_hash = Hasher::finish(&dep_hash);
 
     // This is the key part of the sharing process: if the unit is a runtime dependency, whose
     // target is the same as the host, we canonicalize the compile kind to `CompileKind::Host`.

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -650,7 +650,7 @@ fn compute_metadata(
     unit.is_std.hash(&mut hasher);
 
     MetaInfo {
-        meta_hash: Metadata(hasher.finish()),
+        meta_hash: Metadata(Hasher::finish(&hasher)),
         use_extra_filename: should_use_metadata(bcx, unit),
     }
 }
