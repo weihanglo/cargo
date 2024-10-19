@@ -953,6 +953,16 @@ impl<'gctx> RustcTargetData<'gctx> {
             res.merge_compile_kind(kind)?;
         }
 
+        // TODO: Although `-Zsandbox need this target platform to exist,
+        // if there is no build script involved in the entire dependency tree,
+        // there is no need for doing this target pre-fetch.
+        if ws.gctx().cli_unstable().sandbox {
+            if let Some(target) = gctx.sandbox_config()?.target.as_ref() {
+                let kind = CompileKind::Target(CompileTarget::new(target)?);
+                res.merge_compile_kind(kind)?;
+            }
+        }
+
         Ok(res)
     }
 

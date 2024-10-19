@@ -227,13 +227,23 @@ impl<'gctx> Compilation<'gctx> {
         cmd: T,
         pkg: &Package,
     ) -> CargoResult<ProcessBuilder> {
-        self.fill_env(
-            ProcessBuilder::new(cmd),
-            pkg,
-            None,
-            CompileKind::Host,
-            ToolKind::HostProcess,
-        )
+        let builder = if self.gctx.cli_unstable().sandbox {
+            let sandbox = self.gctx.sandbox_config()?;
+            match &sandbox.runner {
+                Some(runner) => {
+                    let program = runner.path.resolve_program(self.gctx);
+                    let mut builder = ProcessBuilder::new(program);
+                    builder.args(&runner.args);
+                    builder.arg(cmd);
+                    builder
+                }
+                None => ProcessBuilder::new(cmd),
+            }
+        } else {
+            ProcessBuilder::new(cmd)
+        };
+
+        self.fill_env(builder, pkg, None, CompileKind::Host, ToolKind::HostProcess)
     }
 
     pub fn target_runner(&self, kind: CompileKind) -> Option<&(PathBuf, Vec<String>)> {

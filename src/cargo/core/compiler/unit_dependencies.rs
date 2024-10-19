@@ -481,8 +481,16 @@ fn compute_deps_custom_build(
         &unit.pkg,
         &unit.target,
         script_unit_for,
-        // Build scripts always compiled for the host.
-        CompileKind::Host,
+        // Build scripts always compiled for the host,
+        // unless `sandbox.target` is set.
+        if state.gctx.cli_unstable().sandbox {
+            match state.gctx.sandbox_config()?.target.as_ref() {
+                Some(target) => CompileKind::Target(super::CompileTarget::new(target)?),
+                None => CompileKind::Host,
+            }
+        } else {
+            CompileKind::Host
+        },
         CompileMode::Build,
         IS_NO_ARTIFACT_DEP,
     )?;
