@@ -32,10 +32,10 @@
 //! [instructions]: https://doc.rust-lang.org/cargo/reference/build-scripts.html#outputs-of-the-build-script
 
 use super::{fingerprint, BuildRunner, Job, Unit, Work};
-use crate::core::compiler::artifact;
 use crate::core::compiler::build_runner::Metadata;
 use crate::core::compiler::fingerprint::DirtyReason;
 use crate::core::compiler::job_queue::JobState;
+use crate::core::compiler::{artifact, FileFlavor};
 use crate::core::{profiles::ProfileRoot, PackageId, Target};
 use crate::util::errors::CargoResult;
 use crate::util::internal;
@@ -265,7 +265,19 @@ fn build_work(build_runner: &mut BuildRunner<'_, '_>, unit: &Unit) -> CargoResul
     }
 
     // Building the command to execute
-    let to_exec = script_dir.join(unit.target.name());
+    let to_exec = if build_runner.bcx.gctx.cli_unstable().sandbox {
+        // XXX: is the `expect` statement here really the truth?
+        let outputs = build_runner.outputs(build_script_unit)?;
+        let mut outputs = outputs
+            .iter()
+            .filter(|output| output.flavor == FileFlavor::Normal);
+        let (Some(output), None) = (outputs.next(), outputs.next()) else {
+            panic!("a build script to produce the one and only executable");
+        };
+        output.bin_dst().as_os_str().to_os_string()
+    } else {
+        script_dir.join(unit.target.name()).into_os_string()
+    };
 
     // Start preparing the process to execute, starting out with some
     // environment variables. Note that the profile-related environment
@@ -274,7 +286,6 @@ fn build_work(build_runner: &mut BuildRunner<'_, '_>, unit: &Unit) -> CargoResul
     // NOTE: if you add any profile flags, be sure to update
     // `Profiles::get_profile_run_custom_build` so that those flags get
     // carried over.
-    let to_exec = to_exec.into_os_string();
     let mut cmd = build_runner.compilation.host_process(to_exec, &unit.pkg)?;
     let debug = unit.profile.debuginfo.is_turned_on();
     cmd.env("OUT_DIR", &script_out_dir)

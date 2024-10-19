@@ -228,6 +228,7 @@ pub struct GlobalContext {
     doc_extern_map: LazyCell<RustdocExternMap>,
     progress_config: ProgressConfig,
     env_config: LazyCell<EnvConfig>,
+    sandbox_config: LazyCell<CargoSandboxConfig>,
     /// This should be false if:
     /// - this is an artifact of the rustc distribution process for "stable" or for "beta"
     /// - this is an `#[test]` that does not opt in with `enable_nightly_features`
@@ -322,6 +323,7 @@ impl GlobalContext {
             doc_extern_map: LazyCell::new(),
             progress_config: ProgressConfig::default(),
             env_config: LazyCell::new(),
+            sandbox_config: LazyCell::new(),
             nightly_features_allowed: matches!(&*features::channel(), "nightly" | "dev"),
             ws_roots: RefCell::new(HashMap::new()),
             global_cache_tracker: LazyCell::new(),
@@ -1891,6 +1893,15 @@ impl GlobalContext {
             .try_borrow_with(|| self.get::<RustdocExternMap>("doc.extern-map"))
     }
 
+    /// Returns the config table of `[sandbox]` (unstable).
+    ///
+    /// TODO: currently access `sandbox.runner` from config for convenience.
+    /// Need to find a better configuration design.
+    pub fn sandbox_config(&self) -> CargoResult<&CargoSandboxConfig> {
+        self.sandbox_config
+            .try_borrow_with(|| self.get::<CargoSandboxConfig>("sandbox"))
+    }
+
     /// Returns true if the `[target]` table should be applied to host targets.
     pub fn target_applies_to_host(&self) -> CargoResult<bool> {
         target::get_target_applies_to_host(self)
@@ -2722,6 +2733,15 @@ pub enum ProgressWhen {
     Auto,
     Never,
     Always,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct CargoSandboxConfig {
+    /// Target platform sandboxed build scripts built for.
+    pub target: Option<String>,
+    /// Runner that executes artifacts of build scripts.
+    pub runner: Option<PathAndArgs>,
 }
 
 fn progress_or_string<'de, D>(deserializer: D) -> Result<Option<ProgressConfig>, D::Error>
