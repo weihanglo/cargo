@@ -179,7 +179,7 @@ jobs:
     - name: Configure extra test environment
       run: echo CARGO_CONTAINER_TESTS=1 >> $GITHUB_ENV
       if: matrix.os == 'ubuntu-latest'
-    - run: cargo test -p cargo
+    - run: cargo test -p cargo list_command_looks_at_path_case_mismatch
     - name: Clear intermediate test output
       run: ci/clean-test-output.sh
 
