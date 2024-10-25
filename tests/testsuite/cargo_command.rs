@@ -8,6 +8,7 @@ use std::process::Stdio;
 use std::str;
 
 use cargo_test_support::basic_manifest;
+use cargo_test_support::compare::assert_e2e;
 use cargo_test_support::prelude::*;
 use cargo_test_support::registry::Package;
 use cargo_test_support::str;
@@ -115,7 +116,7 @@ fn list_command_looks_at_path() {
 #[cargo_test]
 fn list_command_looks_at_path_case_mismatch() {
     let proj = project()
-        .executable(Path::new("path-test").join("cargo-1"), "")
+        .executable(Path::new("path-test").join("cargo-case-mismatch-on-windows"), "")
         .build();
 
     let mut path = path();
@@ -130,11 +131,13 @@ fn list_command_looks_at_path_case_mismatch() {
         .exec_with_output()
         .unwrap();
     let output = str::from_utf8(&output.stdout).unwrap();
-    assert!(
-        output.contains("\n    1                   "),
-        "missing 1: {}",
-        output
-    );
+
+    assert_e2e().eq(output, str![[r#"
+Installed Commands:
+...
+[..]case-mismatch-on-windows[..]
+...
+"#]]);
 }
 
 #[expect(deprecated)]
