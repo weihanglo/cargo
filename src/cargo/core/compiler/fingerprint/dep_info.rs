@@ -754,4 +754,10 @@ mod encoded_dep_info {
         // Cargo can't recognize v0 after `-Zchecksum-freshess` added.
         assert!(EncodedDepInfo::parse(&data).is_none());
     }
+
+    #[test]
+    fn parse_realworld_v0_fingerprint_dep_info() {
+        let data = include_bytes!("dep-lib-cargo_test_macro");
+        assert!(EncodedDepInfo::parse(&data[..]).is_none());
+    }
 }
