@@ -357,6 +357,7 @@ dependencies = [
  "regex",
  "rusqlite",
  "rustc-hash 2.0.0",
+ "rustc-stable-hash",
  "rustfix",
  "same-file",
  "semver",
@@ -3068,6 +3069,12 @@ name = "rustc-hash"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "583034fd73374156e66797ed8e5b0d5690409c9226b22d87cb7f19821c05d152"
+
+[[package]]
+name = "rustc-stable-hash"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5c9f15eec8235d7cb775ee6f81891db79b98fd54ba1ad8fae565b88ef1ae4e2"
 
 [[package]]
 name = "rustfix"
