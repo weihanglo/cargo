@@ -681,7 +681,7 @@ fn compute_metadata(
     }
 
     Metadata {
-        meta_hash: UnitHash(hasher.finish()),
+        meta_hash: UnitHash(Hasher::finish(&hasher)),
         use_extra_filename: use_extra_filename(bcx, unit),
     }
 }
