@@ -273,38 +273,75 @@ fn version() -> (u32, bool) {
     unsafe { VERSION }
 }
 
-fn check_command(command_path: &Path, args: &[&str]) -> bool {
+#[derive(Debug)]
+enum CheckCommandError {
+    CannotExecute {
+        program: String,
+        error: std::io::Error,
+    },
+    UnsuccessfulTermination {
+        program: String,
+        output: std::process::Output,
+    },
+}
+
+impl std::fmt::Display for CheckCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CheckCommandError::CannotExecute { program, error } => {
+                writeln!(
+                    f,
+                    "expected command `{program}` to be somewhere in PATH: {error}"
+                )
+            }
+            CheckCommandError::UnsuccessfulTermination { program, output } => {
+                writeln!(
+                    f,
+                    "expected command `{program}` to be runnable, got error {}:\n\
+                    stderr:{}\n\
+                    stdout:{}\n",
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr),
+                    String::from_utf8_lossy(&output.stdout),
+                )
+            }
+        }
+    }
+}
+
+fn check_command(command_path: &Path, args: &[&str]) -> Result<(), CheckCommandError> {
     let mut command = Command::new(command_path);
-    let command_name = command.get_program().to_str().unwrap().to_owned();
+    let program = command.get_program().to_str().unwrap().to_owned();
     command.args(args);
     let output = match command.output() {
         Ok(output) => output,
-        Err(e) => {
+        Err(error) => {
+            return Err(CheckCommandError::CannotExecute { program, error });
+        }
+    };
+    if !output.status.success() {
+        return Err(CheckCommandError::UnsuccessfulTermination { program, output });
+    }
+    Ok(())
+}
+
+fn has_command(command: &str) -> bool {
+    match check_command(Path::new(command), &["--version"]).as_ref() {
+        Ok(()) => true,
+        Err(e @ CheckCommandError::CannotExecute { program, .. }) => {
             // * hg is not installed on GitHub macOS or certain constrained
             //   environments like Docker. Consider installing it if Cargo
             //   gains more hg support, but otherwise it isn't critical.
             // * lldb is not pre-installed on Ubuntu and Windows, so skip.
-            if is_ci() && !matches!(command_name.as_str(), "hg" | "lldb") {
-                panic!("expected command `{command_name}` to be somewhere in PATH: {e}",);
+            if is_ci() && !matches!(program.as_str(), "hg" | "lldb") {
+                panic!("{e}")
             }
-            return false;
+            false
         }
-    };
-    if !output.status.success() {
-        panic!(
-            "expected command `{command_name}` to be runnable, got error {}:\n\
-            stderr:{}\n\
-            stdout:{}\n",
-            output.status,
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
-        );
+        Err(e @ CheckCommandError::UnsuccessfulTermination { .. }) => {
+            panic!("{e}");
+        }
     }
-    true
-}
-
-fn has_command(command: &str) -> bool {
-    check_command(Path::new(command), &["--version"])
 }
 
 fn has_rustup_stable() -> bool {
@@ -328,7 +365,12 @@ fn has_rustup_stable() -> bool {
         None => return false,
     };
     let cargo = Path::new(home).join("bin/cargo");
-    check_command(&cargo, &["+stable", "--version"])
+    if let Err(e @ CheckCommandError::UnsuccessfulTermination { .. }) =
+        check_command(&cargo, &["+stable", "--version"])
+    {
+        panic!("{e}");
+    }
+    true
 }
 
 /// Whether or not this running in a Continuous Integration environment.
