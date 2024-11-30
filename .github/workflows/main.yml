@@ -163,6 +163,9 @@ jobs:
     - run: rustup target add ${{ matrix.other }}
     - run: rustup component add rustc-dev llvm-tools-preview rust-docs
       if: startsWith(matrix.rust, 'nightly')
+    - name: Append rustup toolchain target bins to PATH
+      run: echo "$(dirname $(rustc --print target-libdir))/bin" >> "$GITHUB_PATH"
+      if: matrix.os == 'ubuntu-latest'
     - run: sudo apt update -y && sudo apt install lldb gcc-multilib libsecret-1-0 libsecret-1-dev -y
       if: matrix.os == 'ubuntu-latest'
     - run: rustup component add rustfmt || echo "rustfmt not available"

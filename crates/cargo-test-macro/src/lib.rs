@@ -326,19 +326,30 @@ fn check_command(command_path: &Path, args: &[&str]) -> Result<(), CheckCommandE
 }
 
 fn has_command(command: &str) -> bool {
-    match check_command(Path::new(command), &["--version"]).as_ref() {
-        Ok(()) => true,
-        Err(e @ CheckCommandError::CannotExecute { program, .. }) => {
-            // * hg is not installed on GitHub macOS or certain constrained
-            //   environments like Docker. Consider installing it if Cargo
-            //   gains more hg support, but otherwise it isn't critical.
-            // * lldb is not pre-installed on Ubuntu and Windows, so skip.
-            if is_ci() && !matches!(program.as_str(), "hg" | "lldb") {
-                panic!("{e}")
+    let cmd = Path::new(command);
+    let mut err = None;
+    for arg in ["--version", "-h"] {
+        match check_command(cmd, &[arg]) {
+            Ok(()) => return true,
+            Err(e) => {
+                err = Some(e);
             }
+        }
+    }
+
+    match err.unwrap() {
+        // Always bail out if a command is not found on CI, except:
+        //
+        // * hg is not installed on GitHub macOS or certain constrained
+        //   environments like Docker. Consider installing it if Cargo
+        //   gains more hg support, but otherwise it isn't critical.
+        // * lldb is not pre-installed on Ubuntu and Windows, so skip.
+        CheckCommandError::CannotExecute { program, .. }
+            if !is_ci() || matches!(program.as_str(), "hg" | "lldb") =>
+        {
             false
         }
-        Err(e @ CheckCommandError::UnsuccessfulTermination { .. }) => {
+        e => {
             panic!("{e}");
         }
     }

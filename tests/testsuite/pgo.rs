@@ -1,36 +1,14 @@
 //! Test if PGO works.
 
-use std::path::PathBuf;
-use std::process::Command;
-
 use cargo_test_support::prelude::*;
 use cargo_test_support::project;
 use cargo_test_support::str;
 
-fn llvm_profdata() -> Option<PathBuf> {
-    let output = Command::new("rustc")
-        .arg("--print=target-libdir")
-        .output()
-        .expect("rustc to run");
-    assert!(output.status.success());
-    let mut libdir = PathBuf::from(String::from_utf8(output.stdout).unwrap());
-    assert!(libdir.pop());
-    let mut bin = libdir.join("bin").join("llvm-profdata");
-    bin.exists().then(|| bin.clone()).or_else(|| {
-        bin.set_extension("exe");
-        bin.exists().then_some(bin)
-    })
-}
-
-#[cargo_test]
 // macOS may emit different LLVM PGO warnings.
 // Windows LLVM has different requirements.
-#[cfg_attr(not(target_os = "linux"), ignore = "linux only")]
+#[cfg_attr(not(target_os = "linux"), cargo_test, ignore = "linux only")]
+#[cfg_attr(target_os = "linux", cargo_test(requires = "llvm-profdata", nightly, reason = "don't run on rust-lang/rust CI"))]
 fn pgo_works() {
-    let Some(llvm_profdata) = llvm_profdata() else {
-        return;
-    };
-
     let p = project()
         .file(
             "Cargo.toml",
@@ -77,7 +55,7 @@ fn pgo_works() {
         .with_process_builder(cargo_test_support::process(release_bin))
         .run();
 
-    cargo_test_support::process(llvm_profdata)
+    cargo_test_support::process("llvm-profdata")
         .arg("merge")
         .arg("-o")
         .arg(&profdata_path)
