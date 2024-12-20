@@ -396,7 +396,11 @@ fn prepare_archive(
     let src_files = src.list_files(pkg)?;
 
     // Check (git) repository state, getting the current commit hash.
-    let vcs_info = check_repo_state(pkg, &src_files, gctx, &opts)?;
+    let vcs_info = if std::env::var("GIX").is_ok() {
+        check_repo_state_x(pkg, &src_files, gctx, &opts)?
+    } else {
+        check_repo_state(pkg, &src_files, gctx, &opts)?
+    };
 
     build_ar_list(ws, pkg, src_files, vcs_info)
 }
@@ -903,6 +907,227 @@ fn check_repo_state(
             if let Ok(sub_repo) = submodule.open() {
                 status_submodules(&sub_repo, dirty_files)?;
                 collect_statuses(&sub_repo, dirty_files)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Checks if the package source is in a *git* DVCS repository. If *git*, and
+/// the source is *dirty* (e.g., has uncommitted changes), and `--allow-dirty`
+/// has not been passed, then `bail!` with an informative message. Otherwise
+/// return the sha1 hash of the current *HEAD* commit, or `None` if no repo is
+/// found.
+#[tracing::instrument(skip_all)]
+fn check_repo_state_x(
+    p: &Package,
+    src_files: &[PathBuf],
+    gctx: &GlobalContext,
+    opts: &PackageOpts<'_>,
+) -> CargoResult<Option<VcsInfo>> {
+    let Ok(repo) = gix::ThreadSafeRepository::discover(p.root()) else {
+        gctx.shell().verbose(|shell| {
+            shell.warn(format!("no (git) VCS found for `{}`", p.root().display()))
+        })?;
+        // No Git repo found. Have to assume it is clean.
+        return Ok(None);
+    };
+    let repo = repo.to_thread_local();
+
+    let Some(workdir) = repo.work_dir() else {
+        debug!(
+            "no (git) workdir found for repo at `{}`",
+            repo.path().display()
+        );
+        // No git workdir. Have to assume it is clean.
+        return Ok(None);
+    };
+
+    let Ok(index) = repo.index_or_empty() else {
+        debug!(
+            "no (git) index found for repo at `{}`",
+            repo.path().display()
+        );
+        // No git workdir. Have to assume it is clean.
+        return Ok(None);
+    };
+
+    debug!("found a git repo at `{}`", workdir.display());
+    let path = p.manifest_path();
+    let path = paths::strip_prefix_canonical(path, workdir).unwrap_or_else(|_| path.to_path_buf());
+    let pathspec = {
+        let path = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(&path));
+        [gix::bstr::BString::from(path.as_ref())]
+    };
+    let dirwalk_opts = dirwalk_options(&repo)?;
+    let Some(status) = repo
+        .dirwalk_iter(index.clone(), pathspec, Default::default(), dirwalk_opts)
+        .ok()
+        .and_then(|mut it| it.find_map(|e| e.ok()))
+        .map(|e| e.entry.status)
+    else {
+        gctx.shell().verbose(|shell| {
+            shell.warn(format!(
+                "no (git) Cargo.toml found at `{}` in workdir `{}`",
+                path.display(),
+                workdir.display()
+            ))
+        })?;
+        // No checked-in `Cargo.toml` found. This package may be irrelevant.
+        // Have to assume it is clean.
+        return Ok(None);
+    };
+
+    if matches!(status, gix::dir::entry::Status::Ignored(_)) {
+        gctx.shell().verbose(|shell| {
+            shell.warn(format!(
+                "found (git) Cargo.toml ignored at `{}` in workdir `{}`",
+                path.display(),
+                workdir.display()
+            ))
+        })?;
+        // An ignored `Cargo.toml` found. This package may be irrelevant.
+        // Have to assume it is clean.
+        return Ok(None);
+    }
+
+    debug!(
+        "found (git) Cargo.toml at `{}` in workdir `{}`",
+        path.display(),
+        workdir.display(),
+    );
+    let path_in_vcs = path
+        .parent()
+        .and_then(|p| p.to_str())
+        .unwrap_or("")
+        .replace("\\", "/");
+    let Some(git) = git(src_files, &repo, index, &opts)? else {
+        // If the git repo lacks essensial field like `sha1`, and since this field exists from the beginning,
+        // then don't generate the corresponding file in order to maintain consistency with past behavior.
+        return Ok(None);
+    };
+
+    return Ok(Some(VcsInfo { git, path_in_vcs }));
+
+    fn git(
+        src_files: &[PathBuf],
+        repo: &gix::Repository,
+        index: Arc<gix::fs::FileSnapshot<gix::index::File>>,
+        opts: &PackageOpts<'_>,
+    ) -> CargoResult<Option<GitVcsInfo>> {
+        let mut dirty_files = Vec::new();
+        collect_statuses(repo, index, &mut dirty_files)?;
+        // Include each submodule so that the error message can provide
+        // specifically *which* files in a submodule are modified.
+        status_submodules(repo, &mut dirty_files)?;
+
+        // Find the intersection of dirty in git, and the src_files that would
+        // be packaged. This is a lazy n^2 check, but seems fine with
+        // thousands of files.
+        let workdir = repo.work_dir().unwrap();
+        let mut dirty_src_files: Vec<_> = src_files
+            .iter()
+            .filter(|src_file| dirty_files.iter().any(|path| src_file.starts_with(path)))
+            .map(|path| {
+                path.strip_prefix(workdir)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string()
+            })
+            .collect();
+        let dirty = !dirty_src_files.is_empty();
+        if !dirty || opts.allow_dirty {
+            let rev_obj = repo.rev_parse_single("HEAD")?;
+            Ok(Some(GitVcsInfo {
+                sha1: rev_obj.to_string(),
+                dirty,
+            }))
+        } else {
+            dirty_src_files.sort_unstable();
+            anyhow::bail!(
+                "{} files in the working directory contain changes that were \
+                 not yet committed into git:\n\n{}\n\n\
+                 to proceed despite this and include the uncommitted changes, pass the `--allow-dirty` flag",
+                dirty_src_files.len(),
+                dirty_src_files.join("\n")
+            )
+        }
+    }
+
+    /// This is a collection of any dirty or untracked files.
+    ///
+    /// This covers:
+    ///
+    /// - new/modified/deleted/renamed/type change (index or worktree)
+    /// - untracked files (which are "new" worktree files)
+    /// - ignored (in case the user has an `include` directive that
+    ///   conflicts with .gitignore).
+    fn dirwalk_options(repo: &gix::Repository) -> CargoResult<gix::dirwalk::Options> {
+        Ok(repo
+            .dirwalk_options()?
+            .emit_untracked(gix::dir::walk::EmissionMode::Matching)
+            .emit_ignored(Some(gix::dir::walk::EmissionMode::Matching))
+            .emit_tracked(true)
+            .recurse_repositories(false)
+            .symlinks_to_directories_are_ignored_like_directories(true)
+            .emit_empty_directories(false))
+    }
+
+    // Helper to collect dirty statuses for a single repo.
+    fn collect_statuses(
+        repo: &gix::Repository,
+        index: Arc<gix::fs::FileSnapshot<gix::index::File>>,
+        dirty_files: &mut Vec<PathBuf>,
+    ) -> CargoResult<()> {
+        let dirwalk_opts = dirwalk_options(repo)?;
+        let pathspec: [gix::bstr::BString; 0] = [];
+        let repo_statuses = repo
+            .dirwalk_iter(index, pathspec, Default::default(), dirwalk_opts)
+            .with_context(|| {
+                format!(
+                    "failed to retrieve git status from repo {}",
+                    repo.path().display()
+                )
+            })?;
+        let workdir = repo.work_dir().unwrap();
+        for entry in repo_statuses {
+            let entry = entry?.entry;
+            if entry.disk_kind == Some(gix::dir::entry::Kind::Repository) {
+                // Exclude submodules, as they are being handled manually by recursing
+                // into each one so that details about specific files can be retrieved.
+                continue;
+            }
+            let path = gix::path::from_bstr(entry.rela_path);
+            if path.ends_with("Cargo.lock")
+                && matches!(entry.status, gix::dir::entry::Status::Ignored(_))
+            {
+                // It is OK to include Cargo.lock even if it is ignored.
+                continue;
+            }
+            // Use an absolute path, so that comparing paths is easier
+            // (particularly with submodules).
+            dirty_files.push(workdir.join(path));
+        }
+        Ok(())
+    }
+
+    // Helper to collect dirty statuses while recursing into submodules.
+    fn status_submodules(
+        repo: &gix::Repository,
+        dirty_files: &mut Vec<PathBuf>,
+    ) -> CargoResult<()> {
+        let Some(submodules) = repo.submodules()? else {
+            return Ok(());
+        };
+        // Ignore submodules that don't open, they are probably not initialized.
+        // If its files are required, then the verification step should fail.
+        for sub_repo in submodules
+            .into_iter()
+            .filter_map(|m| m.open().ok().flatten())
+        {
+            status_submodules(&sub_repo, dirty_files)?;
+            if let Ok(index) = sub_repo.index_or_empty() {
+                collect_statuses(&sub_repo, index, dirty_files)?;
             }
         }
         Ok(())
