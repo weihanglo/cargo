@@ -21,6 +21,7 @@ use crate::core::{
 use crate::core::{EitherManifest, Package, SourceId, VirtualManifest};
 use crate::ops;
 use crate::sources::{PathSource, SourceConfigMap, CRATES_IO_INDEX, CRATES_IO_REGISTRY};
+use crate::util::context::{Context, HomeContext};
 use crate::util::edit_distance;
 use crate::util::errors::{CargoResult, ManifestError};
 use crate::util::interning::InternedString;
@@ -1947,7 +1948,7 @@ pub fn resolve_relative_path(
 /// Finds the path of the root of the workspace.
 pub fn find_workspace_root(
     manifest_path: &Path,
-    gctx: &GlobalContext,
+    gctx: &dyn Context,
 ) -> CargoResult<Option<PathBuf>> {
     find_workspace_root_with_loader(manifest_path, gctx, |self_path| {
         let key = self_path.parent().unwrap();
@@ -1965,12 +1966,12 @@ pub fn find_workspace_root(
 /// workspace root is.
 fn find_workspace_root_with_loader(
     manifest_path: &Path,
-    gctx: &GlobalContext,
+    gctx: &dyn Context,
     mut loader: impl FnMut(&Path) -> CargoResult<Option<PathBuf>>,
 ) -> CargoResult<Option<PathBuf>> {
     // Check if there are any workspace roots that have already been found that would work
     {
-        let roots = gctx.ws_roots.borrow();
+        let roots = gctx.ws_roots_borrow_mut_();
         // Iterate through the manifests parent directories until we find a workspace
         // root. Note we skip the first item since that is just the path itself
         for current in manifest_path.ancestors().skip(1) {
@@ -2004,7 +2005,7 @@ fn read_root_pointer(member_manifest: &Path, root_link: &str) -> PathBuf {
 
 fn find_root_iter<'a>(
     manifest_path: &'a Path,
-    gctx: &'a GlobalContext,
+    gctx: &'a dyn HomeContext,
 ) -> impl Iterator<Item = PathBuf> + 'a {
     LookBehind::new(paths::ancestors(manifest_path, None).skip(2))
         .take_while(|path| !path.curr.ends_with("target/package"))
@@ -2015,7 +2016,7 @@ fn find_root_iter<'a>(
         // crates.io crates into the workspace by accident.
         .take_while(|path| {
             if let Some(last) = path.last {
-                gctx.home() != last
+                gctx.home_() != last
             } else {
                 true
             }
