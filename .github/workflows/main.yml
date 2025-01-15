@@ -38,7 +38,7 @@ jobs:
     #
     # ALL THE PREVIOUS JOBS NEED TO BE ADDED TO THE `needs` SECTION OF THIS JOB!
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       # Manually check the status of all dependencies. `if: failure()` does not work.
       - name: Conclusion
@@ -50,7 +50,7 @@ jobs:
 
   # Check Code style quickly by running `rustfmt` over all code
   rustfmt:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v4
     - run: rustup update stable && rustup default stable
@@ -119,15 +119,15 @@ jobs:
       matrix:
         include:
         - name: Linux x86_64 stable
-          os: ubuntu-latest
+          os: ubuntu-22.04
           rust: stable
           other: i686-unknown-linux-gnu
         - name: Linux x86_64 beta
-          os: ubuntu-latest
+          os: ubuntu-22.04
           rust: beta
           other: i686-unknown-linux-gnu
         - name: Linux x86_64 nightly
-          os: ubuntu-latest
+          os: ubuntu-22.04
           rust: nightly
           other: i686-unknown-linux-gnu
         - name: macOS aarch64 stable
