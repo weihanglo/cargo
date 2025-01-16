@@ -2,9 +2,10 @@ use anyhow::Context as _;
 
 use cargo_util_schemas::manifest::PackageName;
 
+use crate::util::context::HomeContext;
+use crate::util::context::ShellContext;
 use crate::util::restricted_names;
 use crate::CargoResult;
-use crate::GlobalContext;
 
 const DEFAULT_EDITION: crate::core::features::Edition =
     crate::core::features::Edition::LATEST_STABLE;
@@ -16,11 +17,14 @@ const AUTO_FIELDS: &[&str] = &[
     "autobenches",
 ];
 
-pub(super) fn expand_manifest(
+pub(super) fn expand_manifest<C>(
     content: &str,
     path: &std::path::Path,
-    gctx: &GlobalContext,
-) -> CargoResult<String> {
+    gctx: &C,
+) -> CargoResult<String>
+where
+    C: HomeContext + ShellContext,
+{
     let source = ScriptSource::parse(content)?;
     if let Some(frontmatter) = source.frontmatter() {
         match source.info() {
@@ -42,7 +46,7 @@ pub(super) fn expand_manifest(
         rel_path.push("target");
         rel_path.push(&hash[0..2]);
         rel_path.push(&hash[2..]);
-        let target_dir = gctx.home().join(rel_path);
+        let target_dir = gctx.home_().join(rel_path);
         let hacked_path = target_dir
             .join(
                 path.file_name()
@@ -77,11 +81,10 @@ pub(super) fn expand_manifest(
     }
 }
 
-fn expand_manifest_(
-    manifest: &str,
-    path: &std::path::Path,
-    gctx: &GlobalContext,
-) -> CargoResult<toml::Table> {
+fn expand_manifest_<C>(manifest: &str, path: &std::path::Path, gctx: &C) -> CargoResult<toml::Table>
+where
+    C: HomeContext + ShellContext,
+{
     let mut manifest: toml::Table = toml::from_str(&manifest)?;
 
     for key in ["workspace", "lib", "bin", "example", "test", "bench"] {
@@ -118,7 +121,7 @@ fn expand_manifest_(
         .entry("name".to_owned())
         .or_insert(toml::Value::String(name));
     package.entry("edition".to_owned()).or_insert_with(|| {
-        let _ = gctx.shell().warn(format_args!(
+        let _ = gctx.shell_().warn(format_args!(
             "`package.edition` is unspecified, defaulting to `{}`",
             DEFAULT_EDITION
         ));
@@ -551,7 +554,7 @@ fn main() {}
         let shell = crate::Shell::from_write(Box::new(Vec::new()));
         let cwd = std::env::current_dir().unwrap();
         let home = home::cargo_home_with_cwd(&cwd).unwrap();
-        let gctx = GlobalContext::new(shell, cwd, home);
+        let gctx = crate::GlobalContext::new(shell, cwd, home);
         expand_manifest(source, std::path::Path::new("/home/me/test.rs"), &gctx)
             .unwrap_or_else(|err| panic!("{}", err))
     }

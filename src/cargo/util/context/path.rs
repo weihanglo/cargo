@@ -1,3 +1,4 @@
+use super::HomeContext;
 use super::{GlobalContext, UnmergedStringList, Value};
 use serde::{de::Error, Deserialize};
 use std::path::PathBuf;
@@ -28,7 +29,7 @@ impl ConfigRelativePath {
     ///
     /// This will always return an absolute path where it's relative to the
     /// location for configuration for this value.
-    pub fn resolve_path(&self, gctx: &GlobalContext) -> PathBuf {
+    pub fn resolve_path(&self, gctx: &impl HomeContext) -> PathBuf {
         self.0.definition.root(gctx).join(&self.0.val)
     }
 

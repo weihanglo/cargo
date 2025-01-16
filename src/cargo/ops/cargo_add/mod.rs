@@ -355,7 +355,7 @@ fn resolve_dependency(
             let workspace_root = || Ok(ws.root_manifest().parent().unwrap());
             lookup_path_base(
                 &PathBaseName::new(base.clone())?,
-                &gctx,
+                gctx,
                 &workspace_root,
                 spec.manifest().unstable_features(),
             )?;

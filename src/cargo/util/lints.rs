@@ -1,4 +1,5 @@
 use crate::core::{Edition, Feature, Features, Manifest, Package};
+use crate::util::context::HomeContext;
 use crate::{CargoResult, GlobalContext};
 use annotate_snippets::{Level, Snippet};
 use cargo_util_schemas::manifest::{TomlLintLevel, TomlToolLints};
@@ -235,8 +236,8 @@ pub fn get_span(
 
 /// Gets the relative path to a manifest from the current working directory, or
 /// the absolute path of the manifest if a relative path cannot be constructed
-pub fn rel_cwd_manifest_path(path: &Path, gctx: &GlobalContext) -> String {
-    diff_paths(path, gctx.cwd())
+pub fn rel_cwd_manifest_path(path: &Path, gctx: &impl HomeContext) -> String {
+    diff_paths(path, gctx.cwd_())
         .unwrap_or_else(|| path.to_path_buf())
         .display()
         .to_string()

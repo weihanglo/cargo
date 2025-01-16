@@ -129,6 +129,7 @@ use cargo_util::ProcessBuilder;
 use serde::{Deserialize, Serialize};
 
 use crate::core::resolver::ResolveBehavior;
+use crate::util::context::UnstableFlagsContext;
 use crate::util::errors::CargoResult;
 use crate::util::indented_lines;
 use crate::GlobalContext;
@@ -538,12 +539,12 @@ impl Features {
     /// Creates a new unstable features context.
     pub fn new(
         features: &[String],
-        gctx: &GlobalContext,
+        gctx: &impl UnstableFlagsContext,
         warnings: &mut Vec<String>,
         is_local: bool,
     ) -> CargoResult<Features> {
         let mut ret = Features::default();
-        ret.nightly_features_allowed = gctx.nightly_features_allowed;
+        ret.nightly_features_allowed = gctx.nightly_features_allowed_();
         ret.is_local = is_local;
         for feature in features {
             ret.add(feature, gctx, warnings)?;
@@ -555,7 +556,7 @@ impl Features {
     fn add(
         &mut self,
         feature_name: &str,
-        gctx: &GlobalContext,
+        gctx: &impl UnstableFlagsContext,
         warnings: &mut Vec<String>,
     ) -> CargoResult<()> {
         let nightly_features_allowed = self.nightly_features_allowed;
@@ -599,7 +600,7 @@ impl Features {
                 see_docs()
             ),
             Status::Unstable => {
-                if let Some(allow) = &gctx.cli_unstable().allow_features {
+                if let Some(allow) = &gctx.cli_unstable_().allow_features {
                     if !allow.contains(feature_name) {
                         bail!(
                             "the feature `{}` is not in the list of allowed features: [{}]",

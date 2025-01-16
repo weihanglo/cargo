@@ -1182,6 +1182,8 @@ fn vcs_status_check_for_each_workspace_member() {
             r#"
                 [workspace]
                 members = ["isengard", "mordor"]
+                [workspace.package]
+                edition = "2015"
             "#,
         )
         .file("hobbit", "...")
@@ -1190,7 +1192,7 @@ fn vcs_status_check_for_each_workspace_member() {
             r#"
                 [package]
                 name = "isengard"
-                edition = "2015"
+                edition.workspace = true
                 homepage = "saruman"
                 description = "saruman"
                 license = "MIT"
@@ -1202,7 +1204,7 @@ fn vcs_status_check_for_each_workspace_member() {
             r#"
                 [package]
                 name = "mordor"
-                edition = "2015"
+                edition.workspace = true
                 homepage = "sauron"
                 description = "sauron"
                 license = "MIT"
@@ -1228,6 +1230,7 @@ fn vcs_status_check_for_each_workspace_member() {
 
     // Ensure dirty files be reported only for one affected package.
     p.cargo("package --workspace --no-verify")
+        .env("CARGO_LOG", "cargo::ops::cargo_package::vcs=debug")
         .with_status(101)
         .with_stderr_data(str![[r#"
 [PACKAGING] isengard v0.0.0 ([ROOT]/foo/isengard)
@@ -1376,6 +1379,7 @@ fn dirty_file_outside_pkg_root_considered_dirty() {
 
     // Ensure dirty files be reported.
     p.cargo("package --workspace --no-verify")
+        .env("CARGO_LOG", "cargo::ops::cargo_package::vcs=debug")
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] 4 files in the working directory contain changes that were not yet committed into git:

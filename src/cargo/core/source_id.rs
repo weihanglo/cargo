@@ -5,6 +5,8 @@ use crate::sources::registry::CRATES_IO_HTTP_INDEX;
 use crate::sources::source::Source;
 use crate::sources::{DirectorySource, CRATES_IO_DOMAIN, CRATES_IO_INDEX, CRATES_IO_REGISTRY};
 use crate::sources::{GitSource, PathSource, RegistrySource};
+use crate::util::context::HomeContext;
+use crate::util::context::SourceContext;
 use crate::util::interning::InternedString;
 use crate::util::{context, CanonicalUrl, CargoResult, GlobalContext, IntoUrl};
 use anyhow::Context as _;
@@ -249,8 +251,8 @@ impl SourceId {
     ///
     /// This is the main cargo registry by default, but it can be overridden in
     /// a `.cargo/config.toml`.
-    pub fn crates_io(gctx: &GlobalContext) -> CargoResult<SourceId> {
-        gctx.crates_io_source_id()
+    pub fn crates_io(gctx: &impl SourceContext) -> CargoResult<SourceId> {
+        gctx.crates_io_source_id_()
     }
 
     /// Returns the `SourceId` corresponding to the main repository, using the
@@ -282,11 +284,14 @@ impl SourceId {
     }
 
     /// Gets the `SourceId` associated with given name of the remote registry.
-    pub fn alt_registry(gctx: &GlobalContext, key: &str) -> CargoResult<SourceId> {
+    pub fn alt_registry<C>(gctx: &C, key: &str) -> CargoResult<SourceId>
+    where
+        C: HomeContext + SourceContext,
+    {
         if key == CRATES_IO_REGISTRY {
             return Self::crates_io(gctx);
         }
-        let url = gctx.get_registry_index(key)?;
+        let url = gctx.get_registry_index_(key)?;
         Self::for_alt_registry(&url, key)
     }
 

@@ -29,6 +29,11 @@ use crate::core::{Dependency, Manifest, Package, PackageId, Summary, Target};
 use crate::core::{Edition, EitherManifest, Feature, Features, VirtualManifest, Workspace};
 use crate::core::{GitReference, PackageIdSpec, SourceId, WorkspaceConfig, WorkspaceRootConfig};
 use crate::sources::{CRATES_IO_INDEX, CRATES_IO_REGISTRY};
+use crate::util::context::HomeContext;
+use crate::util::context::ShellContext;
+use crate::util::context::SourceContext;
+use crate::util::context::UnstableFlagsContext;
+use crate::util::context::WorkspaceLoaderContext;
 use crate::util::errors::{CargoResult, ManifestError};
 use crate::util::interning::InternedString;
 use crate::util::lints::{get_span, rel_cwd_manifest_path};
@@ -58,11 +63,10 @@ pub fn is_embedded(path: &Path) -> bool {
 /// come from patched or replaced dependencies. These paths are not
 /// canonicalized.
 #[tracing::instrument(skip(gctx))]
-pub fn read_manifest(
-    path: &Path,
-    source_id: SourceId,
-    gctx: &GlobalContext,
-) -> CargoResult<EitherManifest> {
+pub fn read_manifest<C>(path: &Path, source_id: SourceId, gctx: &C) -> CargoResult<EitherManifest>
+where
+    C: HomeContext + SourceContext + UnstableFlagsContext + ShellContext + WorkspaceLoaderContext,
+{
     let mut warnings = Default::default();
     let mut errors = Default::default();
 
@@ -80,8 +84,7 @@ pub fn read_manifest(
         let workspace_config = to_workspace_config(&original_toml, path, gctx, &mut warnings)?;
         if let WorkspaceConfig::Root(ws_root_config) = &workspace_config {
             let package_root = path.parent().unwrap();
-            gctx.ws_roots
-                .borrow_mut()
+            gctx.ws_roots_borrow_mut_()
                 .insert(package_root.to_owned(), ws_root_config.clone());
         }
         let normalized_toml = normalize_toml(
@@ -146,10 +149,13 @@ pub fn read_manifest(
 }
 
 #[tracing::instrument(skip_all)]
-fn read_toml_string(path: &Path, gctx: &GlobalContext) -> CargoResult<String> {
+fn read_toml_string<C>(path: &Path, gctx: &C) -> CargoResult<String>
+where
+    C: HomeContext + UnstableFlagsContext + ShellContext,
+{
     let mut contents = paths::read(path)?;
     if is_embedded(path) {
-        if !gctx.cli_unstable().script {
+        if !gctx.cli_unstable_().script {
             anyhow::bail!("parsing `{}` requires `-Zscript`", path.display());
         }
         contents = embedded::expand_manifest(&contents, path, gctx)?;
@@ -205,7 +211,7 @@ fn stringify(dst: &mut String, path: &serde_ignored::Path<'_>) {
 fn to_workspace_config(
     original_toml: &manifest::TomlManifest,
     manifest_file: &Path,
-    gctx: &GlobalContext,
+    gctx: &impl UnstableFlagsContext,
     warnings: &mut Vec<String>,
 ) -> CargoResult<WorkspaceConfig> {
     let workspace_config = match (
@@ -266,17 +272,18 @@ fn to_workspace_root_config(
 
 /// See [`Manifest::normalized_toml`] for more details
 #[tracing::instrument(skip_all)]
-fn normalize_toml(
+fn normalize_toml<C>(
     original_toml: &manifest::TomlManifest,
     features: &Features,
     workspace_config: &WorkspaceConfig,
     manifest_file: &Path,
-    gctx: &GlobalContext,
+    gctx: &C,
     warnings: &mut Vec<String>,
     errors: &mut Vec<String>,
-) -> CargoResult<manifest::TomlManifest> {
-    let package_root = manifest_file.parent().unwrap();
-
+) -> CargoResult<manifest::TomlManifest>
+where
+    C: HomeContext + SourceContext + UnstableFlagsContext + ShellContext + WorkspaceLoaderContext,
+{
     let inherit_cell: LazyCell<InheritableFields> = LazyCell::new();
     let inherit = || {
         inherit_cell
@@ -509,7 +516,7 @@ fn normalize_toml(
 }
 
 fn normalize_patch<'a>(
-    gctx: &GlobalContext,
+    gctx: &impl SourceContext,
     original_patch: Option<&BTreeMap<String, BTreeMap<PackageName, TomlDependency>>>,
     workspace_root: &dyn Fn() -> CargoResult<&'a Path>,
     features: &Features,
@@ -718,8 +725,8 @@ fn normalize_features(
 }
 
 #[tracing::instrument(skip_all)]
-fn normalize_dependencies<'a>(
-    gctx: &GlobalContext,
+fn normalize_dependencies<'a, C>(
+    gctx: &C,
     edition: Edition,
     features: &Features,
     orig_deps: Option<&BTreeMap<manifest::PackageName, manifest::InheritableDependency>>,
@@ -728,7 +735,10 @@ fn normalize_dependencies<'a>(
     workspace_root: &dyn Fn() -> CargoResult<&'a Path>,
     package_root: &Path,
     warnings: &mut Vec<String>,
-) -> CargoResult<Option<BTreeMap<manifest::PackageName, manifest::InheritableDependency>>> {
+) -> CargoResult<Option<BTreeMap<manifest::PackageName, manifest::InheritableDependency>>>
+where
+    C: SourceContext + UnstableFlagsContext + WorkspaceLoaderContext,
+{
     let Some(dependencies) = orig_deps else {
         return Ok(None);
     };
@@ -755,7 +765,7 @@ fn normalize_dependencies<'a>(
             )?;
             if d.public.is_some() {
                 let with_public_feature = features.require(Feature::public_dependency()).is_ok();
-                let with_z_public = gctx.cli_unstable().public_dependency;
+                let with_z_public = gctx.cli_unstable_().public_dependency;
                 if matches!(kind, None) {
                     if !with_public_feature && !with_z_public {
                         d.public = None;
@@ -793,7 +803,7 @@ fn normalize_dependencies<'a>(
 }
 
 fn normalize_path_dependency<'a>(
-    gctx: &GlobalContext,
+    gctx: &impl SourceContext,
     detailed_dep: &mut TomlDetailedDependency,
     workspace_root: &dyn Fn() -> CargoResult<&'a Path>,
     features: &Features,
@@ -809,11 +819,14 @@ fn normalize_path_dependency<'a>(
     Ok(())
 }
 
-fn load_inheritable_fields(
-    gctx: &GlobalContext,
+pub(crate) fn load_inheritable_fields<C>(
+    gctx: &C,
     normalized_path: &Path,
     workspace_config: &WorkspaceConfig,
-) -> CargoResult<InheritableFields> {
+) -> CargoResult<InheritableFields>
+where
+    C: HomeContext + SourceContext + UnstableFlagsContext + ShellContext + WorkspaceLoaderContext,
+{
     match workspace_config {
         WorkspaceConfig::Root(root) => Ok(root.inheritable().clone()),
         WorkspaceConfig::Member {
@@ -836,16 +849,16 @@ fn load_inheritable_fields(
     }
 }
 
-fn inheritable_from_path(
-    gctx: &GlobalContext,
-    workspace_path: PathBuf,
-) -> CargoResult<InheritableFields> {
+fn inheritable_from_path<C>(gctx: &C, workspace_path: PathBuf) -> CargoResult<InheritableFields>
+where
+    C: HomeContext + SourceContext + UnstableFlagsContext + ShellContext + WorkspaceLoaderContext,
+{
     // Workspace path should have Cargo.toml at the end
     let workspace_path_root = workspace_path.parent().unwrap();
 
     // Let the borrow exit scope so that it can be picked up if there is a need to
     // read a manifest
-    if let Some(ws_root) = gctx.ws_roots.borrow().get(workspace_path_root) {
+    if let Some(ws_root) = gctx.ws_roots_borrow_().get(workspace_path_root) {
         return Ok(ws_root.inheritable().clone());
     };
 
@@ -853,8 +866,7 @@ fn inheritable_from_path(
     let man = read_manifest(&workspace_path, source_id, gctx)?;
     match man.workspace_config() {
         WorkspaceConfig::Root(root) => {
-            gctx.ws_roots
-                .borrow_mut()
+            gctx.ws_roots_borrow_mut_()
                 .insert(workspace_path, root.clone());
             Ok(root.inheritable().clone())
         }
@@ -1113,7 +1125,7 @@ fn deprecated_ws_default_features(
 }
 
 #[tracing::instrument(skip_all)]
-pub fn to_real_manifest(
+pub fn to_real_manifest<C>(
     contents: String,
     document: toml_edit::ImDocument<String>,
     original_toml: manifest::TomlManifest,
@@ -1122,10 +1134,13 @@ pub fn to_real_manifest(
     workspace_config: WorkspaceConfig,
     source_id: SourceId,
     manifest_file: &Path,
-    gctx: &GlobalContext,
+    gctx: &C,
     warnings: &mut Vec<String>,
     _errors: &mut Vec<String>,
-) -> CargoResult<Manifest> {
+) -> CargoResult<Manifest>
+where
+    C: HomeContext + SourceContext + UnstableFlagsContext + ShellContext,
+{
     let embedded = is_embedded(manifest_file);
     let package_root = manifest_file.parent().unwrap();
     if !package_root.is_dir() {
@@ -1457,7 +1472,7 @@ pub fn to_real_manifest(
     };
 
     if let Some(profiles) = &normalized_toml.profile {
-        let cli_unstable = gctx.cli_unstable();
+        let cli_unstable = gctx.cli_unstable_();
         validate_profiles(profiles, cli_unstable, &features, warnings)?;
     }
 
@@ -1626,14 +1641,17 @@ pub fn to_real_manifest(
     Ok(manifest)
 }
 
-fn missing_dep_diagnostic(
+fn missing_dep_diagnostic<C>(
     missing_dep: &MissingDependencyError,
     orig_toml: &TomlManifest,
     document: &ImDocument<String>,
     contents: &str,
     manifest_file: &Path,
-    gctx: &GlobalContext,
-) -> CargoResult<()> {
+    gctx: &C,
+) -> CargoResult<()>
+where
+    C: HomeContext + ShellContext,
+{
     let dep_name = missing_dep.dep_name;
     let manifest_path = rel_cwd_manifest_path(manifest_file, gctx);
     let feature_value_span =
@@ -1699,13 +1717,13 @@ fn missing_dep_diagnostic(
         message.snippet(snippet)
     };
 
-    if let Err(err) = gctx.shell().print_message(message) {
+    if let Err(err) = gctx.shell_().print_message(message) {
         return Err(err.into());
     }
     Err(AlreadyPrintedError::new(anyhow!("").into()).into())
 }
 
-fn to_virtual_manifest(
+fn to_virtual_manifest<C>(
     contents: String,
     document: toml_edit::ImDocument<String>,
     original_toml: manifest::TomlManifest,
@@ -1714,10 +1732,13 @@ fn to_virtual_manifest(
     workspace_config: WorkspaceConfig,
     source_id: SourceId,
     manifest_file: &Path,
-    gctx: &GlobalContext,
+    gctx: &C,
     warnings: &mut Vec<String>,
     _errors: &mut Vec<String>,
-) -> CargoResult<VirtualManifest> {
+) -> CargoResult<VirtualManifest>
+where
+    C: HomeContext + SourceContext + UnstableFlagsContext,
+{
     let root = manifest_file.parent().unwrap();
 
     let mut deps = Vec::new();
@@ -1736,7 +1757,7 @@ fn to_virtual_manifest(
         )
     };
     if let Some(profiles) = &normalized_toml.profile {
-        validate_profiles(profiles, gctx.cli_unstable(), &features, warnings)?;
+        validate_profiles(profiles, gctx.cli_unstable_(), &features, warnings)?;
     }
     let resolve_behavior = normalized_toml
         .workspace
@@ -1790,21 +1811,24 @@ fn validate_dependencies(
     Ok(())
 }
 
-struct ManifestContext<'a, 'b> {
+struct ManifestContext<'a, 'b, C> {
     deps: &'a mut Vec<Dependency>,
     source_id: SourceId,
-    gctx: &'b GlobalContext,
+    gctx: &'b C,
     warnings: &'a mut Vec<String>,
     platform: Option<Platform>,
     root: &'a Path,
 }
 
 #[tracing::instrument(skip_all)]
-fn gather_dependencies(
-    manifest_ctx: &mut ManifestContext<'_, '_>,
+fn gather_dependencies<C>(
+    manifest_ctx: &mut ManifestContext<'_, '_, C>,
     normalized_deps: Option<&BTreeMap<manifest::PackageName, manifest::InheritableDependency>>,
     kind: Option<DepKind>,
-) -> CargoResult<()> {
+) -> CargoResult<()>
+where
+    C: HomeContext + SourceContext + UnstableFlagsContext,
+{
     let Some(dependencies) = normalized_deps else {
         return Ok(());
     };
@@ -1817,10 +1841,13 @@ fn gather_dependencies(
     Ok(())
 }
 
-fn replace(
+fn replace<C>(
     me: &manifest::TomlManifest,
-    manifest_ctx: &mut ManifestContext<'_, '_>,
-) -> CargoResult<Vec<(PackageIdSpec, Dependency)>> {
+    manifest_ctx: &mut ManifestContext<'_, '_, C>,
+) -> CargoResult<Vec<(PackageIdSpec, Dependency)>>
+where
+    C: HomeContext + SourceContext + UnstableFlagsContext,
+{
     if me.patch.is_some() && me.replace.is_some() {
         bail!("cannot specify both [replace] and [patch]");
     }
@@ -1865,17 +1892,20 @@ fn replace(
     Ok(replace)
 }
 
-fn patch(
+fn patch<C>(
     me: &manifest::TomlManifest,
-    manifest_ctx: &mut ManifestContext<'_, '_>,
-) -> CargoResult<HashMap<Url, Vec<Dependency>>> {
+    manifest_ctx: &mut ManifestContext<'_, '_, C>,
+) -> CargoResult<HashMap<Url, Vec<Dependency>>>
+where
+    C: HomeContext + SourceContext + UnstableFlagsContext,
+{
     let mut patch = HashMap::new();
     for (toml_url, deps) in me.patch.iter().flatten() {
         let url = match &toml_url[..] {
             CRATES_IO_REGISTRY => CRATES_IO_INDEX.parse().unwrap(),
             _ => manifest_ctx
                 .gctx
-                .get_registry_index(toml_url)
+                .get_registry_index_(toml_url)
                 .or_else(|_| toml_url.into_url())
                 .with_context(|| {
                     format!(
@@ -1932,12 +1962,16 @@ pub(crate) fn to_dependency<P: ResolveToPath + Clone>(
     )
 }
 
-fn dep_to_dependency<P: ResolveToPath + Clone>(
+fn dep_to_dependency<P, C>(
     orig: &manifest::TomlDependency<P>,
     name: &str,
-    manifest_ctx: &mut ManifestContext<'_, '_>,
+    manifest_ctx: &mut ManifestContext<'_, '_, C>,
     kind: Option<DepKind>,
-) -> CargoResult<Dependency> {
+) -> CargoResult<Dependency>
+where
+    P: ResolveToPath + Clone,
+    C: HomeContext + SourceContext + UnstableFlagsContext,
+{
     match *orig {
         manifest::TomlDependency::Simple(ref version) => detailed_dep_to_dependency(
             &manifest::TomlDetailedDependency::<P> {
@@ -1954,12 +1988,16 @@ fn dep_to_dependency<P: ResolveToPath + Clone>(
     }
 }
 
-fn detailed_dep_to_dependency<P: ResolveToPath + Clone>(
+fn detailed_dep_to_dependency<P, C>(
     orig: &manifest::TomlDetailedDependency<P>,
     name_in_toml: &str,
-    manifest_ctx: &mut ManifestContext<'_, '_>,
+    manifest_ctx: &mut ManifestContext<'_, '_, C>,
     kind: Option<DepKind>,
-) -> CargoResult<Dependency> {
+) -> CargoResult<Dependency>
+where
+    P: ResolveToPath + Clone,
+    C: HomeContext + SourceContext + UnstableFlagsContext,
+{
     if orig.version.is_none() && orig.path.is_none() && orig.git.is_none() {
         anyhow::bail!(
             "dependency ({name_in_toml}) specified without \
@@ -2065,7 +2103,7 @@ fn detailed_dep_to_dependency<P: ResolveToPath + Clone>(
         orig.lib.unwrap_or(false),
         orig.target.as_deref(),
     ) {
-        if manifest_ctx.gctx.cli_unstable().bindeps {
+        if manifest_ctx.gctx.cli_unstable_().bindeps {
             let artifact = Artifact::parse(&artifact.0, is_lib, target)?;
             if dep.kind() != DepKind::Build
                 && artifact.target() == Some(ArtifactTarget::BuildDependencyAssumeTarget)
@@ -2097,11 +2135,15 @@ fn detailed_dep_to_dependency<P: ResolveToPath + Clone>(
     Ok(dep)
 }
 
-fn to_dependency_source_id<P: ResolveToPath + Clone>(
+fn to_dependency_source_id<P, C>(
     orig: &manifest::TomlDetailedDependency<P>,
     name_in_toml: &str,
-    manifest_ctx: &mut ManifestContext<'_, '_>,
-) -> CargoResult<SourceId> {
+    manifest_ctx: &mut ManifestContext<'_, '_, C>,
+) -> CargoResult<SourceId>
+where
+    P: ResolveToPath + Clone,
+    C: SourceContext + HomeContext,
+{
     match (
         orig.git.as_ref(),
         orig.path.as_ref(),
@@ -2184,7 +2226,7 @@ fn to_dependency_source_id<P: ResolveToPath + Clone>(
 
 pub(crate) fn lookup_path_base<'a>(
     base: &PathBaseName,
-    gctx: &GlobalContext,
+    gctx: &impl SourceContext,
     workspace_root: &dyn Fn() -> CargoResult<&'a Path>,
     features: &Features,
 ) -> CargoResult<PathBuf> {
@@ -2195,8 +2237,8 @@ pub(crate) fn lookup_path_base<'a>(
     let base_key = format!("path-bases.{base}");
 
     // Look up the relevant base in the Config and use that as the root.
-    if let Some(path_bases) = gctx.get::<Option<ConfigRelativePath>>(&base_key)? {
-        Ok(path_bases.resolve_path(gctx))
+    if let Some(path_bases) = gctx.get_path_base_(&base_key)? {
+        Ok(path_bases)
     } else {
         // Otherwise, check the built-in bases.
         match base.as_str() {
@@ -2210,17 +2252,17 @@ pub(crate) fn lookup_path_base<'a>(
 }
 
 pub trait ResolveToPath {
-    fn resolve(&self, gctx: &GlobalContext) -> PathBuf;
+    fn resolve(&self, gctx: &impl HomeContext) -> PathBuf;
 }
 
 impl ResolveToPath for String {
-    fn resolve(&self, _: &GlobalContext) -> PathBuf {
+    fn resolve(&self, _: &impl HomeContext) -> PathBuf {
         self.into()
     }
 }
 
 impl ResolveToPath for ConfigRelativePath {
-    fn resolve(&self, gctx: &GlobalContext) -> PathBuf {
+    fn resolve(&self, gctx: &impl HomeContext) -> PathBuf {
         self.resolve_path(gctx)
     }
 }
@@ -2423,7 +2465,7 @@ fn validate_profile_override(profile: &manifest::TomlProfile, which: &str) -> Ca
 
 fn verify_lints(
     lints: Option<&manifest::TomlLints>,
-    gctx: &GlobalContext,
+    gctx: &impl UnstableFlagsContext,
     warnings: &mut Vec<String>,
 ) -> CargoResult<()> {
     let Some(lints) = lints else {
@@ -2441,7 +2483,7 @@ supported tools: {}",
             warnings.push(message);
             continue;
         }
-        if tool == "cargo" && !gctx.cli_unstable().cargo_lints {
+        if tool == "cargo" && !gctx.cli_unstable_().cargo_lints {
             warn_for_cargo_lint_feature(gctx, warnings);
         }
         for (name, config) in lints {
@@ -2477,7 +2519,7 @@ supported tools: {}",
     Ok(())
 }
 
-fn warn_for_cargo_lint_feature(gctx: &GlobalContext, warnings: &mut Vec<String>) {
+fn warn_for_cargo_lint_feature(gctx: &impl UnstableFlagsContext, warnings: &mut Vec<String>) {
     use std::fmt::Write as _;
 
     let key_name = "lints.cargo";
@@ -2489,7 +2531,7 @@ fn warn_for_cargo_lint_feature(gctx: &GlobalContext, warnings: &mut Vec<String>)
         message,
         "unused manifest key `{key_name}` (may be supported in a future version)"
     );
-    if gctx.nightly_features_allowed {
+    if gctx.nightly_features_allowed_() {
         let _ = write!(
             message,
             "
@@ -2565,18 +2607,21 @@ fn lints_to_rustflags(lints: &manifest::TomlLints) -> CargoResult<Vec<String>> {
     Ok(rustflags)
 }
 
-fn emit_diagnostic(
+fn emit_diagnostic<C>(
     e: toml_edit::de::Error,
     contents: &str,
     manifest_file: &Path,
-    gctx: &GlobalContext,
-) -> anyhow::Error {
+    gctx: &C,
+) -> anyhow::Error
+where
+    C: HomeContext + ShellContext,
+{
     let Some(span) = e.span() else {
         return e.into();
     };
 
     // Get the path to the manifest, relative to the cwd
-    let manifest_path = diff_paths(manifest_file, gctx.cwd())
+    let manifest_path = diff_paths(manifest_file, gctx.cwd_())
         .unwrap_or_else(|| manifest_file.to_path_buf())
         .display()
         .to_string();
@@ -2586,7 +2631,7 @@ fn emit_diagnostic(
             .fold(true)
             .annotation(Level::Error.span(span)),
     );
-    if let Err(err) = gctx.shell().print_message(message) {
+    if let Err(err) = gctx.shell_().print_message(message) {
         return err.into();
     }
     return AlreadyPrintedError::new(e.into()).into();

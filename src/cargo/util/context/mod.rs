@@ -51,7 +51,7 @@
 
 use crate::util::cache_lock::{CacheLock, CacheLockMode, CacheLocker};
 use std::borrow::Cow;
-use std::cell::{RefCell, RefMut};
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -1705,6 +1705,11 @@ impl GlobalContext {
         Ok(())
     }
 
+    fn get_path_base(&self, base_key: &str) -> CargoResult<Option<PathBuf>> {
+        self.get::<Option<ConfigRelativePath>>(&base_key)
+            .map(|path_bases| path_bases.map(|path_bases| path_bases.resolve_path(self)))
+    }
+
     /// Looks for a path for `tool` in an environment variable or the given config, and returns
     /// `None` if it's not present.
     fn maybe_get_tool(
@@ -3050,5 +3055,83 @@ mod tests {
             disables_multiplexing_for_bad_curl(curl_v, &mut http, &gctx);
             assert_eq!(http.multiplexing, result);
         }
+    }
+}
+
+pub trait WorkspaceLoaderContext {
+    fn ws_roots_borrow_(&self) -> Ref<'_, HashMap<PathBuf, WorkspaceRootConfig>>;
+    fn ws_roots_borrow_mut_(&self) -> RefMut<'_, HashMap<PathBuf, WorkspaceRootConfig>>;
+}
+
+pub trait HomeContext {
+    /// Gets the user's Cargo home directory (OS-dependent).
+    fn home_(&self) -> &Filesystem;
+
+    /// The current working directory.
+    fn cwd_(&self) -> &Path;
+
+    /// Gets the index for a registry.
+    fn get_registry_index_(&self, registry: &str) -> CargoResult<Url>;
+}
+
+pub trait ShellContext {
+    fn shell_(&self) -> RefMut<'_, Shell>;
+}
+
+pub trait UnstableFlagsContext {
+    fn cli_unstable_(&self) -> &CliUnstable;
+    fn nightly_features_allowed_(&self) -> bool;
+}
+
+pub trait SourceContext {
+    fn get_path_base_(&self, base_key: &str) -> CargoResult<Option<PathBuf>>;
+    fn crates_io_source_id_(&self) -> CargoResult<SourceId>;
+}
+
+impl WorkspaceLoaderContext for GlobalContext {
+    fn ws_roots_borrow_(&self) -> Ref<'_, HashMap<PathBuf, WorkspaceRootConfig>> {
+        self.ws_roots.borrow()
+    }
+
+    fn ws_roots_borrow_mut_(&self) -> RefMut<'_, HashMap<PathBuf, WorkspaceRootConfig>> {
+        self.ws_roots.borrow_mut()
+    }
+}
+
+impl HomeContext for GlobalContext {
+    fn home_(&self) -> &Filesystem {
+        self.home()
+    }
+
+    fn cwd_(&self) -> &Path {
+        self.cwd()
+    }
+    fn get_registry_index_(&self, registry: &str) -> CargoResult<Url> {
+        self.get_registry_index(registry)
+    }
+}
+
+impl ShellContext for GlobalContext {
+    fn shell_(&self) -> RefMut<'_, Shell> {
+        self.shell()
+    }
+}
+
+impl UnstableFlagsContext for GlobalContext {
+    fn cli_unstable_(&self) -> &CliUnstable {
+        self.cli_unstable()
+    }
+    fn nightly_features_allowed_(&self) -> bool {
+        self.nightly_features_allowed
+    }
+}
+
+impl SourceContext for GlobalContext {
+    fn get_path_base_(&self, base_key: &str) -> CargoResult<Option<PathBuf>> {
+        self.get_path_base(base_key)
+    }
+
+    fn crates_io_source_id_(&self) -> CargoResult<SourceId> {
+        self.crates_io_source_id()
     }
 }
