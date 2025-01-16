@@ -49,6 +49,7 @@
 //! translate from `ConfigValue` and environment variables to the caller's
 //! desired type.
 
+use crate::core::features::AllowFeatures;
 use crate::util::cache_lock::{CacheLock, CacheLockMode, CacheLocker};
 use std::borrow::Cow;
 use std::cell::{RefCell, RefMut};
@@ -3050,5 +3051,34 @@ mod tests {
             disables_multiplexing_for_bad_curl(curl_v, &mut http, &gctx);
             assert_eq!(http.multiplexing, result);
         }
+    }
+}
+
+/// A trait offering methods for [`Features`] to determine which feature is
+/// allowed to activate.
+pub trait UnstableFeatureContext {
+    /// This is the top-level gate that when false,
+    /// no nightly feature would be allowed in this context.
+    ///
+    /// Generally true when on the nightly channel, and false otherwise.
+    fn nightly_features_allowed(&self) -> bool;
+
+    /// Gets a list of features allowed to use in this context.
+    ///
+    /// The value normally comes from `-Zallow-features` from the CLI,
+    /// or `cargo-features` list from the Cargo.toml manifest file.
+    ///
+    /// Althought being an allow-list, the actual features activated are gated
+    /// by [`UnstableFeatureContext::nightly_features_allowed`].
+    fn allow_features(&self) -> Option<&AllowFeatures>;
+}
+
+impl UnstableFeatureContext for GlobalContext {
+    fn nightly_features_allowed(&self) -> bool {
+        self.nightly_features_allowed
+    }
+
+    fn allow_features(&self) -> Option<&AllowFeatures> {
+        self.unstable_flags.allow_features.as_ref()
     }
 }
