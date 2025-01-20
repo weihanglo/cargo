@@ -10,6 +10,7 @@ use serde::Serialize;
 use tracing::debug;
 
 use crate::core::Package;
+use crate::core::Workspace;
 use crate::sources::PathEntry;
 use crate::CargoResult;
 use crate::GlobalContext;
@@ -44,9 +45,10 @@ pub struct GitVcsInfo {
 pub fn check_repo_state(
     p: &Package,
     src_files: &[PathEntry],
-    gctx: &GlobalContext,
+    ws: &Workspace<'_>,
     opts: &PackageOpts<'_>,
 ) -> CargoResult<Option<VcsInfo>> {
+    let gctx = ws.gctx();
     let Ok(repo) = git2::Repository::discover(p.root()) else {
         gctx.shell().verbose(|shell| {
             shell.warn(format!("no (git) VCS found for `{}`", p.root().display()))
@@ -105,7 +107,7 @@ pub fn check_repo_state(
         .and_then(|p| p.to_str())
         .unwrap_or("")
         .replace("\\", "/");
-    let Some(git) = git(p, gctx, src_files, &repo, &opts)? else {
+    let Some(git) = git(p, ws, src_files, &repo, &opts)? else {
         // If the git repo lacks essensial field like `sha1`, and since this field exists from the beginning,
         // then don't generate the corresponding file in order to maintain consistency with past behavior.
         return Ok(None);
@@ -163,11 +165,12 @@ fn warn_symlink_checked_out_as_plain_text_file(
 /// The real git status check starts from here.
 fn git(
     pkg: &Package,
-    gctx: &GlobalContext,
+    ws: &Workspace<'_>,
     src_files: &[PathEntry],
     repo: &git2::Repository,
     opts: &PackageOpts<'_>,
 ) -> CargoResult<Option<GitVcsInfo>> {
+    let gctx = ws.gctx();
     // This is a collection of any dirty or untracked files. This covers:
     // - new/modified/deleted/renamed/type change (index or worktree)
     // - untracked files (which are "new" worktree files)
@@ -189,7 +192,7 @@ fn git(
         .iter()
         .filter(|src_file| dirty_files.iter().any(|path| src_file.starts_with(path)))
         .map(|p| p.as_ref())
-        .chain(dirty_files_outside_pkg_root(pkg, repo, src_files)?.iter())
+        .chain(dirty_files_outside_pkg_root(ws, pkg, repo, src_files)?.iter())
         .map(|path| {
             pathdiff::diff_paths(path, cwd)
                 .as_ref()
@@ -233,6 +236,7 @@ fn git(
 /// current package root, but still under the git workdir, affecting the
 /// final packaged `.crate` file.
 fn dirty_files_outside_pkg_root(
+    ws: &Workspace<'_>,
     pkg: &Package,
     repo: &git2::Repository,
     src_files: &[PathEntry],
@@ -247,7 +251,7 @@ fn dirty_files_outside_pkg_root(
         .map(|path| paths::normalize_path(&pkg_root.join(path)))
         .collect();
 
-    let mut dirty_symlinks = HashSet::new();
+    let mut dirty_files = HashSet::new();
     for rel_path in src_files
         .iter()
         .filter(|p| p.is_symlink_or_under_symlink())
@@ -259,10 +263,125 @@ fn dirty_files_outside_pkg_root(
         .filter_map(|p| paths::strip_prefix_canonical(p, workdir).ok())
     {
         if repo.status_file(&rel_path)? != git2::Status::CURRENT {
-            dirty_symlinks.insert(workdir.join(rel_path));
+            dirty_files.insert(workdir.join(rel_path));
         }
     }
-    Ok(dirty_symlinks)
+
+    if let Some(dirty_ws_manifest) = dirty_workspace_manifest(ws, pkg, repo)? {
+        dirty_files.insert(dirty_ws_manifest);
+    }
+    Ok(dirty_files)
+}
+
+fn dirty_workspace_manifest(
+    ws: &Workspace<'_>,
+    pkg: &Package,
+    repo: &git2::Repository,
+) -> CargoResult<Option<PathBuf>> {
+    let workdir = repo.workdir().unwrap();
+    let ws_manifest_path = ws.root_manifest();
+    if pkg.manifest_path() == ws_manifest_path {
+        // The workspace manifest is also the primary package manifest.
+        // Normal file statuc check should have covered it.
+        return Ok(None);
+    }
+    if paths::strip_prefix_canonical(ws_manifest_path, pkg.root()).is_ok() {
+        // Inside package root. Don't bother checking git status.
+        return Ok(None);
+    }
+    let Ok(rel_path) = paths::strip_prefix_canonical(ws_manifest_path, workdir) else {
+        // Completely outside this git workdir.
+        return Ok(None);
+    };
+
+    // Outside package root but under git workdir.
+    if repo.status_file(&rel_path)? == git2::Status::CURRENT {
+        return Ok(None);
+    }
+
+    let dirty_path = || Ok(Some(workdir.join(&rel_path)));
+    let dirty = |msg| {
+        debug!(
+            "{msg} for `{}` of repo at `{}`",
+            rel_path.display(),
+            workdir.display(),
+        );
+        dirty_path()
+    };
+
+    // Now get the workspace manifest from Git index.
+    let index = repo.index()?;
+    let Some(entry) = index.get_path(&rel_path, 0) else {
+        return dirty("workspace manifest not found");
+    };
+
+    let blob = repo.find_blob(entry.id)?;
+    let Ok(contents) = String::from_utf8(blob.content().to_vec()) else {
+        return dirty("failed parse as UTF-8 encoding");
+    };
+    let Ok(document) = crate::util::toml::parse_document(&contents) else {
+        return dirty("failed to parse file");
+    };
+
+    let Ok(ws_manifest_from_index) = crate::util::toml::deserialize_toml(&document) else {
+        return dirty("failed to deserialize doc");
+    };
+
+    // Okay now we do one pass of manifest normalization
+    // with the workspace manifest from index,
+    // and compare with the one from workdir we currently have.
+    let Some(workspace_root_config) =
+        ws_manifest_from_index
+            .workspace
+            .as_ref()
+            .map(|toml_workspace| {
+                crate::util::toml::to_workspace_root_config(toml_workspace, ws_manifest_path)
+            })
+    else {
+        return dirty("not a workspace manifest");
+    };
+
+    let empty = Vec::new();
+    let cargo_features = crate::core::Features::new(
+        ws_manifest_from_index
+            .cargo_features
+            .as_ref()
+            .unwrap_or(&empty),
+        ws.gctx(),
+        &mut Default::default(),
+        pkg.package_id().source_id().is_path(),
+    );
+    let Ok(cargo_features) = cargo_features else {
+        return dirty("failed to create unstable features");
+    };
+
+    let Ok(normalized_toml) = crate::util::toml::normalize_toml(
+        pkg.manifest().original_toml(),
+        &cargo_features,
+        &|| Ok(workspace_root_config.inheritable()),
+        pkg.manifest_path(),
+        ws.gctx(),
+        &mut Default::default(),
+        &mut Default::default(),
+    ) else {
+        return dirty("failed to normalize pkg manifest from index");
+    };
+
+    let Ok(from_index) = toml::to_string_pretty(&normalized_toml) else {
+        return dirty("failed to serialize pkg manifest from index");
+    };
+
+    let Ok(from_working_dir) = toml::to_string_pretty(pkg.manifest().normalized_toml()) else {
+        return dirty("failed to serialize pkg manifest from working directory");
+    };
+
+    if from_index != from_working_dir {
+        tracing::trace!("--- from index ---\n{from_index}");
+        tracing::trace!("--- from working dir ---\n{from_working_dir}");
+        return dirty("normalized manifests from index and in working directory mismatched");
+    }
+
+    Ok(None)
 }
 
 /// Helper to collect dirty statuses for a single repo.

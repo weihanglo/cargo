@@ -1493,10 +1493,13 @@ version = "1"
     );
 
     p.cargo("package --workspace --no-verify --no-metadata")
+        .with_status(101)
         .with_stderr_data(str![[r#"
-[PACKAGING] isengard v0.0.0 ([ROOT]/foo/isengard)
-[UPDATING] `dummy-registry` index
-[PACKAGED] 5 files, [FILE_SIZE]B ([FILE_SIZE]B compressed)
+[ERROR] 1 files in the working directory contain changes that were not yet committed into git:
+
+Cargo.toml
+
+to proceed despite this and include the uncommitted changes, pass the `--allow-dirty` flag
 
 "#]])
         .run();
@@ -1534,7 +1537,6 @@ version = "1"
         ],
         [("Cargo.toml", cargo_toml)],
     );
-
 }
 
 #[cargo_test]
