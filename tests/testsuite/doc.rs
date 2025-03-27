@@ -2941,7 +2941,9 @@ fn rebuild_tracks_include_str() {
     p.cargo("doc --verbose -Zrustdoc-depinfo")
         .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
         .with_stderr_data(str![[r#"
-[FRESH] foo v0.5.0 ([ROOT]/parent/foo)
+[DIRTY] foo v0.5.0 ([ROOT]/parent/foo): the file `src/../../README` has changed ([TIME_DIFF_AFTER_LAST_BUILD])
+[DOCUMENTING] foo v0.5.0 ([ROOT]/parent/foo)
+[RUNNING] `rustdoc --edition=2015 --crate-type lib --crate-name foo src/lib.rs -o [ROOT]/parent/foo/target/doc --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=invocation-specific,dep-info=[ROOT]/parent/foo/target/debug/.fingerprint/foo-[HASH]/doc-lib-foo.d -Zunstable-options -C metadata=c96c44ec7e66cd0a -L dependency=[ROOT]/parent/foo/target/debug/deps --crate-version 0.5.0`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/parent/foo/target/doc/foo/index.html
 
@@ -2949,7 +2951,7 @@ fn rebuild_tracks_include_str() {
         .run();
 
     let doc_html = p.read_file("target/doc/foo/index.html");
-    assert!(!doc_html.contains("depinfo-after"));
+    assert!(doc_html.contains("depinfo-after"));
 }
 
 #[cargo_test(nightly, reason = "`rustdoc --emit` is unstable")]
@@ -2978,7 +2980,9 @@ fn rebuild_tracks_path_attr() {
     p.cargo("doc --verbose -Zrustdoc-depinfo")
         .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
         .with_stderr_data(str![[r#"
-[FRESH] foo v0.5.0 ([ROOT]/parent/foo)
+[DIRTY] foo v0.5.0 ([ROOT]/parent/foo): the file `src/../../bar.rs` has changed ([TIME_DIFF_AFTER_LAST_BUILD])
+[DOCUMENTING] foo v0.5.0 ([ROOT]/parent/foo)
+[RUNNING] `rustdoc --edition=2015 --crate-type lib --crate-name foo src/lib.rs -o [ROOT]/parent/foo/target/doc --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=invocation-specific,dep-info=[ROOT]/parent/foo/target/debug/.fingerprint/foo-[HASH]/doc-lib-foo.d -Zunstable-options -C metadata=c96c44ec7e66cd0a -L dependency=[ROOT]/parent/foo/target/debug/deps --crate-version 0.5.0`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/parent/foo/target/doc/foo/index.html
 
@@ -2986,7 +2990,7 @@ fn rebuild_tracks_path_attr() {
         .run();
 
     let doc_html = p.read_file("target/doc/foo/index.html");
-    assert!(!doc_html.contains("depinfo-after"));
+    assert!(doc_html.contains("depinfo-after"));
 }
 
 #[cargo_test(nightly, reason = "`rustdoc --emit` is unstable")]
@@ -3015,7 +3019,9 @@ fn rebuild_tracks_env() {
         .env(env, "# depinfo-after")
         .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
         .with_stderr_data(str![[r#"
-[FRESH] foo v0.5.0 ([ROOT]/foo)
+[DIRTY] foo v0.5.0 ([ROOT]/foo): the environment variable __RUSTDOC_INJECTED changed
+[DOCUMENTING] foo v0.5.0 ([ROOT]/foo)
+[RUNNING] `rustdoc --edition=2015 --crate-type lib --crate-name foo src/lib.rs -o [ROOT]/foo/target/doc --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=invocation-specific,dep-info=[ROOT]/foo/target/debug/.fingerprint/foo-[HASH]/doc-lib-foo.d -Zunstable-options -C metadata=c96c44ec7e66cd0a -L dependency=[ROOT]/foo/target/debug/deps --crate-version 0.5.0`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
@@ -3023,7 +3029,7 @@ fn rebuild_tracks_env() {
         .run();
 
     let doc_html = p.read_file("target/doc/foo/index.html");
-    assert!(!doc_html.contains("depinfo-after"));
+    assert!(doc_html.contains("depinfo-after"));
 }
 
 #[cargo_test(nightly, reason = "`rustdoc --emit` is unstable")]
@@ -3074,22 +3080,27 @@ fn rebuild_tracks_env_in_dep() {
     p.cargo("doc --verbose -Zrustdoc-depinfo")
         .env(env, "# depinfo-after")
         .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
-        .with_stderr_data(str![[r#"
+        .with_stderr_data(
+            str![[r#"
+[DIRTY] bar v0.1.0: the environment variable __RUSTDOC_INJECTED changed
+[DOCUMENTING] bar v0.1.0
 [DIRTY] bar v0.1.0: the environment variable __RUSTDOC_INJECTED changed
 [CHECKING] bar v0.1.0
-[RUNNING] `rustc --crate-name bar --edition=2015 [ROOT]/home/.cargo/registry/src/-[HASH]/bar-0.1.0/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=6f41df99e0f65289 -C extra-filename=-2e455e19350aea81 --out-dir [ROOT]/foo/target/debug/deps -L dependency=[ROOT]/foo/target/debug/deps --cap-lints allow`
+[RUNNING] `rustc --crate-name bar [..]`
+[RUNNING] `rustdoc [..]--crate-name bar [..]`
 [DIRTY] foo v0.0.0 ([ROOT]/foo): the dependency bar was rebuilt
 [DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
-[RUNNING] `rustdoc --edition=2015 --crate-type lib --crate-name foo src/lib.rs -o [ROOT]/foo/target/doc --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=invocation-specific,dep-info=[ROOT]/foo/target/debug/.fingerprint/foo-[HASH]/doc-lib-foo.d -Zunstable-options -C metadata=390cf06af9746388 -L dependency=[ROOT]/foo/target/debug/deps --extern bar=[ROOT]/foo/target/debug/deps/libbar-[HASH].rmeta --crate-version 0.0.0`
+[RUNNING] `rustdoc [..]--crate-name foo [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
-"#]].unordered()
-    )
+"#]]
+            .unordered(),
+        )
         .run();
 
     let doc_html = p.read_file("target/doc/bar/index.html");
-    assert!(!doc_html.contains("depinfo-after"));
+    assert!(doc_html.contains("depinfo-after"));
 }
 
 #[cargo_test(
@@ -3123,9 +3134,9 @@ fn rebuild_tracks_checksum() {
     p.cargo("doc --verbose -Zrustdoc-depinfo -Zchecksum-freshness")
         .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
         .with_stderr_data(str![[r#"
-[DIRTY] foo v0.5.0 ([ROOT]/parent/foo): the precalculated components changed
+[DIRTY] foo v0.5.0 ([ROOT]/parent/foo): file size changed (16 != 15) for `src/../../README`
 [DOCUMENTING] foo v0.5.0 ([ROOT]/parent/foo)
-[RUNNING] `rustdoc --edition=2015 --crate-type lib --crate-name foo src/lib.rs -o [ROOT]/parent/foo/target/doc --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat -C metadata=c96c44ec7e66cd0a -L dependency=[ROOT]/parent/foo/target/debug/deps --crate-version 0.5.0`
+[RUNNING] `rustdoc [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/parent/foo/target/doc/foo/index.html
 
