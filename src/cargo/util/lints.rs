@@ -8,7 +8,7 @@ use std::ops::Range;
 use std::path::Path;
 
 const LINT_GROUPS: &[LintGroup] = &[TEST_DUMMY_UNSTABLE];
-pub const LINTS: &[Lint] = &[IM_A_TEAPOT, UNKNOWN_LINTS];
+pub const LINTS: &[Lint] = &[IM_A_TEAPOT, INVALID_LICENSE_EXPRESSION, UNKNOWN_LINTS];
 
 pub fn analyze_cargo_lints_table(
     pkg: &Package,
@@ -420,6 +420,42 @@ const IM_A_TEAPOT: Lint = Lint {
     docs: None,
 };
 
+const INVALID_LICENSE_EXPRESSION: Lint = Lint {
+    name: "invalid_license_expression",
+    desc: "invalid SPDX license expression",
+    groups: &[],
+    default_level: LintLevel::Warn,
+    edition_lint_opts: Some((Edition::EditionFuture, LintLevel::Deny)),
+    feature_gate: None,
+    docs: Some(
+        r#"
+### What it does
+Checks for invalid SPDX license expressions in the `package.license` field
+
+### Why it is bad
+- Invalid license expressions can cause confusion about the actual license terms
+- Tools that parse SPDX expressions may fail to understand the license
+- Inconsistent license expressions make it harder to understand licensing across the ecosystem
+
+### Example
+```toml
+[package]
+name = "foo"
+version = "0.1.0"
+license = "MIT / Apache-2.0"  # Invalid SPDX expression
+```
+
+Use valid SPDX operators like `OR`, `AND`, and `WITH`:
+```toml
+[package]
+name = "foo"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+```
+"#,
+    ),
+};
+
 pub fn check_im_a_teapot(
     pkg: &Package,
     path: &Path,
@@ -464,6 +500,78 @@ pub fn check_im_a_teapot(
 
         gctx.shell().print_message(message)?;
     }
+    Ok(())
+}
+
+pub fn check_invalid_license_expression(
+    pkg: &Package,
+    path: &Path,
+    pkg_lints: &TomlToolLints,
+    error_count: &mut usize,
+    gctx: &GlobalContext,
+) -> CargoResult<()> {
+    let manifest = pkg.manifest();
+    let (lint_level, reason) = INVALID_LICENSE_EXPRESSION.level(
+        pkg_lints,
+        manifest.edition(),
+        manifest.unstable_features(),
+    );
+
+    if lint_level == LintLevel::Allow {
+        return Ok(());
+    }
+
+    // Get the license field from the manifest metadata
+    let license = match &manifest.metadata().license {
+        Some(license) => license.as_str(),
+        None => return Ok(()), // No license field, nothing to validate
+    };
+
+    // Try to parse the license expression using the spdx crate
+    let Err(e) = spdx::Expression::parse(license) else {
+        // Valid SPDX expression, no lint needed
+        return Ok(());
+    };
+
+    // Invalid SPDX expression, emit lint
+    if lint_level == LintLevel::Forbid || lint_level == LintLevel::Deny {
+        *error_count += 1;
+    }
+
+    let level = lint_level.to_diagnostic_level();
+    let manifest_path = rel_cwd_manifest_path(path, gctx);
+    let emitted_reason = format!(
+        "`cargo::{}` is set to `{lint_level}` {reason}",
+        INVALID_LICENSE_EXPRESSION.name
+    );
+
+    // Get the span for the license field value
+    let license_field_span = get_span(manifest.document(), &["package", "license"], true)
+        .unwrap_or_else(|| {
+            // Fallback to a reasonable span if we can't find the exact location
+            0..license.len()
+        });
+
+    // Calculate the precise error span within the license string
+    // The license field span includes the quotes, so we need to adjust for the opening quote
+    let error_start = license_field_span.start + 1 + e.span.start; // +1 for opening quote
+    let error_end = license_field_span.start + 1 + e.span.end;
+    let error_span = error_start..error_end;
+
+    let title = format!("{}: `{license}`", INVALID_LICENSE_EXPRESSION.desc);
+    let error_reason = e.reason.to_string();
+    let message = level
+        .title(&title)
+        .snippet(
+            Snippet::source(manifest.contents())
+                .origin(&manifest_path)
+                .annotation(level.span(error_span).label(&error_reason))
+                .fold(true),
+        )
+        .footer(Level::Help.title("see https://spdx.org/licenses/ for valid SPDX license expressions"))
+        .footer(Level::Note.title(&emitted_reason));
+
+    gctx.shell().print_message(message)?;
     Ok(())
 }
 

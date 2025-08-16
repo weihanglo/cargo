@@ -180,16 +180,16 @@ invalid_license_expression = "deny"
     // Test lint configuration with deny level
     p.cargo("check -Zcargo-lints")
         .masquerade_as_nightly_cargo(&["cargo-lints"])
+        .with_status(101)
         .with_stderr_data(str![[r#"
-[WARNING] unknown lint: `invalid_license_expression`
- --> Cargo.toml:9:1
+[ERROR] invalid SPDX license expression: `MIT / Apache-2.0`
+ --> Cargo.toml:6:16
   |
-9 | invalid_license_expression = "deny"
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+6 | license = "MIT / Apache-2.0"
+  |                ^^^^^^^^^^^^ invalid character(s)
   |
-  = [NOTE] `cargo::unknown_lints` is set to `warn` by default
-[CHECKING] foo v0.1.0 ([ROOT]/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+  = [HELP] see https://spdx.org/licenses/ for valid SPDX license expressions
+  = [NOTE] `cargo::invalid_license_expression` is set to `deny` in `[lints]`
 
 "#]])
         .run();
@@ -230,19 +230,14 @@ workspace = true
     p.cargo("check -Zcargo-lints")
         .masquerade_as_nightly_cargo(&["cargo-lints"])
         .with_stderr_data(str![[r#"
-[WARNING] unknown lint: `invalid_license_expression`
- --> Cargo.toml:7:1
+[WARNING] invalid SPDX license expression: `MIT / Apache-2.0`
+ --> foo/Cargo.toml:6:16
   |
-7 | invalid_license_expression = "warn"
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+6 | license = "MIT / Apache-2.0"
+  |                ------------ invalid character(s)
   |
-[NOTE] `cargo::invalid_license_expression` was inherited
- --> foo/Cargo.toml:9:1
-  |
-9 | workspace = true
-  | ----------------
-  |
-  = [NOTE] `cargo::unknown_lints` is set to `warn` by default
+  = [HELP] see https://spdx.org/licenses/ for valid SPDX license expressions
+  = [NOTE] `cargo::invalid_license_expression` is set to `warn` in `[lints]`
 [CHECKING] foo v0.1.0 ([ROOT]/foo/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -274,13 +269,6 @@ invalid_license_expression = "allow"
     p.cargo("check -Zcargo-lints")
         .masquerade_as_nightly_cargo(&["cargo-lints"])
         .with_stderr_data(str![[r#"
-[WARNING] unknown lint: `invalid_license_expression`
- --> Cargo.toml:9:1
-  |
-9 | invalid_license_expression = "allow"
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = [NOTE] `cargo::unknown_lints` is set to `warn` by default
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
