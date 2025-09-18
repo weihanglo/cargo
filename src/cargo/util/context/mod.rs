@@ -1346,7 +1346,7 @@ impl GlobalContext {
             WhyLoad::Cli => Definition::Cli(Some(path.into())),
             WhyLoad::FileDiscovery => Definition::Path(path.into()),
         };
-        let value = CV::from_toml(def, toml::Value::Table(toml)).with_context(|| {
+        let value = CV::from_toml(def, toml).with_context(|| {
             format!(
                 "failed to load TOML configuration from `{}`",
                 path.display()
@@ -1488,11 +1488,6 @@ impl GlobalContext {
                     })?
             } else {
                 let doc = toml_dotted_keys(arg)?;
-                let doc: toml::Value = toml::Value::deserialize(doc.into_deserializer())
-                    .with_context(|| {
-                        format!("failed to parse value from --config argument `{arg}`")
-                    })?;
-
                 if doc
                     .get("registry")
                     .and_then(|v| v.as_table())
@@ -1530,7 +1525,11 @@ impl GlobalContext {
                         k
                     );
                 }
-
+                // Re-parse shouldn't be a problem here becuase `--config` value
+                // is usually finite and small.
+                let doc = parse_document(arg, Path::new(""), self).with_context(|| {
+                    format!("failed to parse value from --config argument `{arg}`")
+                })?;
                 CV::from_toml(Definition::Cli(None), doc)
                     .with_context(|| format!("failed to convert --config argument `{arg}`"))?
             };
@@ -2128,7 +2127,10 @@ impl fmt::Debug for ConfigValue {
 }
 
 impl ConfigValue {
-    fn from_toml(def: Definition, toml: toml::Value) -> CargoResult<ConfigValue> {
+    fn from_toml(
+        def: Definition,
+        toml: toml::Spanned<toml::de::DeValue<'static>>,
+    ) -> CargoResult<ConfigValue> {
         let mut error_path = Vec::new();
         Self::from_toml_inner(def, toml, &mut error_path).with_context(|| {
             let mut it = error_path.iter().rev().peekable();
@@ -2148,14 +2150,19 @@ impl ConfigValue {
 
     fn from_toml_inner(
         def: Definition,
-        toml: toml::Value,
+        toml: toml::Spanned<toml::de::DeValue<'static>>,
         path: &mut Vec<KeyOrIdx>,
     ) -> CargoResult<ConfigValue> {
-        match toml {
-            toml::Value::String(val) => Ok(CV::String(val, def)),
-            toml::Value::Boolean(b) => Ok(CV::Boolean(b, def)),
-            toml::Value::Integer(i) => Ok(CV::Integer(i, def)),
-            toml::Value::Array(val) => Ok(CV::List(
+        use toml::de::DeValue;
+        match toml.into_inner() {
+            DeValue::String(val) => Ok(CV::String(val.into_owned(), def)),
+            DeValue::Boolean(b) => Ok(CV::Boolean(b, def)),
+            DeValue::Integer(i) => Ok(CV::Integer(
+                i64::from_str_radix(i.as_str(), i.radix())
+                    .map_err(|_| anyhow!("integer value out of range"))?,
+                def,
+            )),
+            DeValue::Array(val) => Ok(CV::List(
                 val.into_iter()
                     .enumerate()
                     .map(|(i, toml)| {
@@ -2165,17 +2172,18 @@ impl ConfigValue {
                     .collect::<CargoResult<_>>()?,
                 def,
             )),
-            toml::Value::Table(val) => Ok(CV::Table(
+            DeValue::Table(val) => Ok(CV::Table(
                 val.into_iter()
-                    .map(
-                        |(key, value)| match CV::from_toml_inner(def.clone(), value, path) {
+                    .map(|(key, value)| {
+                        let key = key.into_inner().into_owned();
+                        match CV::from_toml_inner(def.clone(), value, path) {
                             Ok(value) => Ok((key, value)),
                             Err(e) => {
                                 path.push(KeyOrIdx::Key(key));
                                 Err(e)
                             }
-                        },
-                    )
+                        }
+                    })
                     .collect::<CargoResult<_>>()?,
                 def,
             )),
@@ -2405,7 +2413,14 @@ pub fn save_credentials(
         )
     })?;
 
-    let mut toml = parse_document(&contents, file.path(), gctx)?;
+    let toml = parse_document(&contents, file.path(), gctx)?;
+    let mut toml = toml::Value::deserialize(toml.into_deserializer())?;
+    let Some(toml) = toml.as_table_mut() else {
+        bail!(
+            "failed to parse file as TOML table`{}`",
+            file.path().display()
+        );
+    };
 
     // Move the old token location to the new one.
     if let Some(token) = toml.remove("token") {
@@ -2458,6 +2473,14 @@ pub fn save_credentials(
 
         if registry.is_some() {
             if let Some(table) = toml.remove("registries") {
+                // Re-parse shouldn't be a problem here becuase `credential.toml`
+                // should be small, and this `save_credentials` function is
+                // called only during `cargo login and `cargo logout`.
+                let table = table
+                    .as_table()
+                    .expect("registries entry is a table")
+                    .to_string();
+                let table = parse_document(&table, file.path(), gctx)?;
                 let v = CV::from_toml(path_def, table)?;
                 value.merge(v, false)?;
             }
@@ -2569,9 +2592,26 @@ impl ConfigInclude {
     }
 }
 
-fn parse_document(toml: &str, _file: &Path, _gctx: &GlobalContext) -> CargoResult<toml::Table> {
+fn parse_document(
+    toml: &str,
+    _file: &Path,
+    _gctx: &GlobalContext,
+) -> CargoResult<toml::Spanned<toml::de::DeValue<'static>>> {
     // At the moment, no compatibility checks are needed.
-    toml.parse().map_err(Into::into)
+    let mut table = toml::de::DeTable::parse(toml)?;
+    table.get_mut().make_owned();
+    // SAFETY: `DeTable::make_owned` ensures no borrows remain and the lifetime does not affect
+    // layout
+    let table = unsafe {
+        std::mem::transmute::<
+            toml::Spanned<toml::de::DeTable<'_>>,
+            toml::Spanned<toml::de::DeTable<'static>>,
+        >(table)
+    };
+    let span = table.span();
+    let table_value = toml::de::DeValue::Table(table.into_inner());
+    let spanned_value = toml::Spanned::new(span, table_value);
+    Ok(spanned_value)
 }
 
 fn toml_dotted_keys(arg: &str) -> CargoResult<toml_edit::DocumentMut> {
