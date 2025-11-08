@@ -70,7 +70,10 @@ impl fmt::Debug for ConfigValue {
 }
 
 impl ConfigValue {
-    pub(super) fn from_toml(def: Definition, toml: toml::Value) -> CargoResult<ConfigValue> {
+    pub(super) fn from_toml(
+        def: Definition,
+        toml: toml::Spanned<toml::de::DeValue<'static>>,
+    ) -> CargoResult<ConfigValue> {
         let mut error_path = Vec::new();
         Self::from_toml_inner(def, toml, &mut error_path).with_context(|| {
             let mut it = error_path.iter().rev().peekable();
@@ -90,14 +93,19 @@ impl ConfigValue {
 
     fn from_toml_inner(
         def: Definition,
-        toml: toml::Value,
+        toml: toml::Spanned<toml::de::DeValue<'static>>,
         path: &mut Vec<KeyOrIdx>,
     ) -> CargoResult<ConfigValue> {
-        match toml {
-            toml::Value::String(val) => Ok(CV::String(val, def)),
-            toml::Value::Boolean(b) => Ok(CV::Boolean(b, def)),
-            toml::Value::Integer(i) => Ok(CV::Integer(i, def)),
-            toml::Value::Array(val) => Ok(CV::List(
+        use toml::de::DeValue;
+        match toml.into_inner() {
+            DeValue::String(val) => Ok(CV::String(val.into_owned(), def)),
+            DeValue::Boolean(b) => Ok(CV::Boolean(b, def)),
+            DeValue::Integer(i) => Ok(CV::Integer(
+                i64::from_str_radix(i.as_str(), i.radix())
+                    .map_err(|_| anyhow!("integer value out of range"))?,
+                def,
+            )),
+            DeValue::Array(val) => Ok(CV::List(
                 val.into_iter()
                     .enumerate()
                     .map(|(i, toml)| {
@@ -107,17 +115,18 @@ impl ConfigValue {
                     .collect::<CargoResult<_>>()?,
                 def,
             )),
-            toml::Value::Table(val) => Ok(CV::Table(
+            DeValue::Table(val) => Ok(CV::Table(
                 val.into_iter()
-                    .map(
-                        |(key, value)| match CV::from_toml_inner(def.clone(), value, path) {
+                    .map(|(key, value)| {
+                        let key = key.into_inner().into_owned();
+                        match CV::from_toml_inner(def.clone(), value, path) {
                             Ok(value) => Ok((key, value)),
                             Err(e) => {
                                 path.push(KeyOrIdx::Key(key));
                                 Err(e)
                             }
-                        },
-                    )
+                        }
+                    })
                     .collect::<CargoResult<_>>()?,
                 def,
             )),
