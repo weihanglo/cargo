@@ -61,6 +61,7 @@ pub mod machine_message;
 pub mod network;
 mod once;
 pub mod open;
+pub mod patch;
 mod progress;
 mod queue;
 pub mod restricted_names;
