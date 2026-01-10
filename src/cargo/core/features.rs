@@ -583,6 +583,9 @@ features! {
 
     /// Allows use of panic="immediate-abort".
     (unstable, panic_immediate_abort, "", "reference/unstable.html#panic-immediate-abort"),
+
+    /// Allow patching dependencies with patch files.
+    (unstable, patch_files, "", "reference/unstable.html#patch-files"),
 }
 
 /// Status and metadata for a single unstable feature.
@@ -880,6 +883,7 @@ unstable_cli_options!(
     no_index_update: bool = ("Do not update the registry index even if the cache is outdated"),
     panic_abort_tests: bool = ("Enable support to run tests with -Cpanic=abort"),
     panic_immediate_abort: bool = ("Enable setting `panic = \"immediate-abort\"` in profiles"),
+    patch_files: bool = ("Allow patching dependencies with patch files"),
     profile_hint_mostly_unused: bool = ("Enable the `hint-mostly-unused` setting in profiles to mark a crate as mostly unused."),
     profile_rustflags: bool = ("Enable the `rustflags` option in profiles in .cargo/config.toml file"),
     public_dependency: bool = ("Respect a dependency's `public` field in Cargo.toml to control public/private dependencies"),
@@ -1420,6 +1424,7 @@ impl CliUnstable {
             "no-embed-metadata" => self.no_embed_metadata = parse_empty(k, v)?,
             "no-index-update" => self.no_index_update = parse_empty(k, v)?,
             "panic-abort-tests" => self.panic_abort_tests = parse_empty(k, v)?,
+            "patch-files" => self.patch_files = parse_empty(k, v)?,
             "public-dependency" => self.public_dependency = parse_empty(k, v)?,
             "profile-hint-mostly-unused" => self.profile_hint_mostly_unused = parse_empty(k, v)?,
             "profile-rustflags" => self.profile_rustflags = parse_empty(k, v)?,
