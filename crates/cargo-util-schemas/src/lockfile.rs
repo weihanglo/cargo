@@ -7,7 +7,7 @@ use std::{cmp::Ordering, str::FromStr};
 use serde::{Deserialize, Serialize, de, ser};
 use url::Url;
 
-use crate::core::{GitReference, SourceKind};
+use crate::core::GitReference;
 
 /// Serialization of `Cargo.lock`
 #[derive(Serialize, Deserialize, Debug)]
@@ -82,6 +82,70 @@ pub struct TomlLockfileDependency {
     pub replace: Option<TomlLockfilePackageId>,
 }
 
+/// Patch information for lockfile serialization.
+///
+/// Unlike runtime [`PatchInfo`](crate::core::PatchInfo),
+/// this only contains the checksum.
+/// Paths are not stored in lockfile for portability.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TomlLockfilePatchInfo {
+    /// Content-based checksum of all patch files.
+    checksum: String,
+}
+
+impl TomlLockfilePatchInfo {
+    pub fn new(checksum: String) -> Self {
+        Self { checksum }
+    }
+
+    /// Parse patch info from URL query string.
+    ///
+    /// Expects `patch-cksum=<sha256>` parameter.
+    pub fn from_query(
+        query_pairs: impl Iterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
+    ) -> Result<Self, TomlLockfilePatchInfoError> {
+        let mut checksum = None;
+        for (k, v) in query_pairs {
+            if k.as_ref() == "patch-cksum" {
+                checksum = Some(v.as_ref().to_owned());
+            }
+        }
+        let checksum = checksum.ok_or(TomlLockfilePatchInfoError("patch-cksum"))?;
+        Ok(Self { checksum })
+    }
+
+    pub fn checksum(&self) -> &str {
+        &self.checksum
+    }
+}
+
+/// Error parsing patch info from URL query string.
+#[derive(Debug, thiserror::Error)]
+#[error("missing query string `{0}`")]
+pub struct TomlLockfilePatchInfoError(pub &'static str);
+
+/// Source kind for lockfile serialization.
+///
+/// This enum must stay in sync with [`crate::core::SourceKind`].
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TomlLockfileSourceKind {
+    /// A local path.
+    Path,
+    /// A remote registry.
+    Registry,
+    /// A sparse registry.
+    SparseRegistry,
+    /// A local filesystem-based registry.
+    LocalRegistry,
+    /// A directory-based registry.
+    Directory,
+    /// A git repository.
+    Git(GitReference),
+    /// A patched source.
+    /// (checksum only, unlike [`SourceKind::Patched`](crate::core::SourceKind))
+    Patched(TomlLockfilePatchInfo),
+}
+
 /// Serialization of dependency's source
 #[derive(Debug, Clone)]
 #[cfg_attr(
@@ -95,7 +159,7 @@ pub struct TomlLockfileSourceId {
     /// The parsed source type, e.g. `git`, `registry`.
     ///
     /// Used for sources ordering.
-    kind: SourceKind,
+    kind: TomlLockfileSourceKind,
     /// The parsed URL of the source.
     ///
     /// Used for sources ordering.
@@ -121,11 +185,21 @@ impl TomlLockfileSourceId {
         let kind = match kind {
             "git" => {
                 let reference = GitReference::from_query(url.query_pairs());
-                SourceKind::Git(reference)
+                TomlLockfileSourceKind::Git(reference)
             }
-            "registry" => SourceKind::Registry,
-            "sparse" => SourceKind::SparseRegistry,
-            "path" => SourceKind::Path,
+            "registry" => TomlLockfileSourceKind::Registry,
+            "sparse" => TomlLockfileSourceKind::SparseRegistry,
+            "path" => TomlLockfileSourceKind::Path,
+            "patched" => {
+                let patch_info =
+                    TomlLockfilePatchInfo::from_query(url.query_pairs()).map_err(|msg| {
+                        TomlLockfileSourceIdErrorKind::InvalidUrl {
+                            url: url.to_string(),
+                            msg: msg.to_string(),
+                        }
+                    })?;
+                TomlLockfileSourceKind::Patched(patch_info)
+            }
             kind => {
                 return Err(
                     TomlLockfileSourceIdErrorKind::UnsupportedSource(kind.to_string()).into(),
@@ -140,7 +214,7 @@ impl TomlLockfileSourceId {
         })
     }
 
-    pub fn kind(&self) -> &SourceKind {
+    pub fn kind(&self) -> &TomlLockfileSourceKind {
         &self.kind
     }
 
@@ -326,11 +400,15 @@ fn dump_lockfile_schema() {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::{GitReference, SourceKind};
-    use crate::lockfile::{TomlLockfileSourceId, TomlLockfileSourceIdErrorKind};
+    use crate::core::GitReference;
+    use crate::core::SourceKind;
+    use crate::lockfile::TomlLockfilePatchInfo;
+    use crate::lockfile::TomlLockfileSourceId;
+    use crate::lockfile::TomlLockfileSourceIdErrorKind;
+    use crate::lockfile::TomlLockfileSourceKind;
 
     #[track_caller]
-    fn ok(source_str: &str, source_kind: SourceKind, url: &str) {
+    fn ok(source_str: &str, source_kind: TomlLockfileSourceKind, url: &str) {
         let source_str = source_str.to_owned();
         let source_id = TomlLockfileSourceId::new(source_str).unwrap();
         assert_eq!(source_id.kind, source_kind);
@@ -352,38 +430,43 @@ mod tests {
     fn good_sources() {
         ok(
             "sparse+https://my-crates.io",
-            SourceKind::SparseRegistry,
+            TomlLockfileSourceKind::SparseRegistry,
             "sparse+https://my-crates.io",
         );
         ok(
             "registry+https://github.com/rust-lang/crates.io-index",
-            SourceKind::Registry,
+            TomlLockfileSourceKind::Registry,
             "https://github.com/rust-lang/crates.io-index",
         );
         ok(
             "git+https://github.com/rust-lang/cargo",
-            SourceKind::Git(GitReference::DefaultBranch),
+            TomlLockfileSourceKind::Git(GitReference::DefaultBranch),
             "https://github.com/rust-lang/cargo",
         );
         ok(
             "git+https://github.com/rust-lang/cargo?branch=dev",
-            SourceKind::Git(GitReference::Branch("dev".to_owned())),
+            TomlLockfileSourceKind::Git(GitReference::Branch("dev".to_owned())),
             "https://github.com/rust-lang/cargo?branch=dev",
         );
         ok(
             "git+https://github.com/rust-lang/cargo?tag=v1.0",
-            SourceKind::Git(GitReference::Tag("v1.0".to_owned())),
+            TomlLockfileSourceKind::Git(GitReference::Tag("v1.0".to_owned())),
             "https://github.com/rust-lang/cargo?tag=v1.0",
         );
         ok(
             "git+https://github.com/rust-lang/cargo?rev=refs/pull/493/head",
-            SourceKind::Git(GitReference::Rev("refs/pull/493/head".to_owned())),
+            TomlLockfileSourceKind::Git(GitReference::Rev("refs/pull/493/head".to_owned())),
             "https://github.com/rust-lang/cargo?rev=refs/pull/493/head",
         );
         ok(
             "path+file:///path/to/root",
-            SourceKind::Path,
+            TomlLockfileSourceKind::Path,
             "file:///path/to/root",
+        );
+        ok(
+            "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=abc123",
+            TomlLockfileSourceKind::Patched(TomlLockfilePatchInfo::new("abc123".to_owned())),
+            "registry+https://github.com/rust-lang/crates.io-index?patch-cksum=abc123",
         );
     }
 
@@ -401,5 +484,47 @@ mod tests {
             "https//github.com/rust-lang/crates.io-index",
             TomlLockfileSourceIdErrorKind::InvalidSource(..)
         );
+    }
+
+    #[test]
+    fn source_kind_in_sync() {
+        fn _sync(kind: &SourceKind) -> TomlLockfileSourceKind {
+            // ensure 1:1 mapping
+            match kind {
+                SourceKind::Git(r) => TomlLockfileSourceKind::Git(r.clone()),
+                SourceKind::Path => TomlLockfileSourceKind::Path,
+                SourceKind::Registry => TomlLockfileSourceKind::Registry,
+                SourceKind::SparseRegistry => TomlLockfileSourceKind::SparseRegistry,
+                SourceKind::LocalRegistry => TomlLockfileSourceKind::LocalRegistry,
+                SourceKind::Directory => TomlLockfileSourceKind::Directory,
+                SourceKind::Patched(info) => TomlLockfileSourceKind::Patched(
+                    TomlLockfilePatchInfo::new(info.checksum().to_owned()),
+                ),
+            }
+        }
+    }
+
+    // The ordering here is important for how packages are serialized into lock files.
+    // Never change it unless you have a strong reason.
+    // See <https://github.com/rust-lang/cargo/pull/9397> for the history.
+    #[test]
+    fn source_kind_order() {
+        let kinds = vec![
+            TomlLockfileSourceKind::Path,
+            TomlLockfileSourceKind::Registry,
+            TomlLockfileSourceKind::SparseRegistry,
+            TomlLockfileSourceKind::LocalRegistry,
+            TomlLockfileSourceKind::Directory,
+            TomlLockfileSourceKind::Git(GitReference::Tag("v1.0".to_owned())),
+            TomlLockfileSourceKind::Git(GitReference::Branch("main".to_owned())),
+            TomlLockfileSourceKind::Git(GitReference::Rev("4a3c2b".to_owned())),
+            TomlLockfileSourceKind::Git(GitReference::DefaultBranch),
+            TomlLockfileSourceKind::Patched(TomlLockfilePatchInfo::new("checksum".to_owned())),
+        ];
+
+        let mut sorted: Vec<_> = kinds.iter().cloned().collect();
+        sorted.sort();
+
+        assert_eq!(kinds, sorted);
     }
 }
