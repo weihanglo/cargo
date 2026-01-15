@@ -11,7 +11,9 @@ use crate::AlreadyPrintedError;
 use crate::core::summary::MissingDependencyError;
 use anyhow::{Context as _, anyhow, bail};
 use cargo_platform::Platform;
+use cargo_util::Sha256;
 use cargo_util::paths;
+use cargo_util_schemas::core::PatchInfo;
 use cargo_util_schemas::manifest::{
     self, PackageName, PathBaseName, TomlDependency, TomlDetailedDependency, TomlManifest,
     TomlPackageBuild, TomlWorkspace,
@@ -1616,7 +1618,7 @@ pub fn to_real_manifest(
         )?;
     }
     let replace = replace(&normalized_toml, &mut manifest_ctx)?;
-    let patch = patch(&normalized_toml, &mut manifest_ctx)?;
+    let patch = patch(&normalized_toml, &mut manifest_ctx, &features)?;
 
     {
         let mut names_sources = BTreeMap::new();
@@ -1991,7 +1993,7 @@ fn to_virtual_manifest(
         };
         (
             replace(&normalized_toml, &mut manifest_ctx)?,
-            patch(&normalized_toml, &mut manifest_ctx)?,
+            patch(&normalized_toml, &mut manifest_ctx, &features)?,
         )
     };
     if let Some(profiles) = &normalized_toml.profile {
@@ -2129,7 +2131,9 @@ fn replace(
 fn patch(
     me: &TomlManifest,
     manifest_ctx: &mut ManifestContext<'_, '_>,
+    features: &Features,
 ) -> CargoResult<HashMap<Url, Vec<Patch>>> {
+    let patch_files_enabled = features.require(Feature::patch_files()).is_ok();
     let mut patch = HashMap::new();
     for (toml_url, deps) in me.patch.iter().flatten() {
         let url = match &toml_url[..] {
@@ -2151,17 +2155,30 @@ fn patch(
                 })?,
         };
         patch.insert(
-            url,
+            url.clone(),
             deps.iter()
-                .map(|(name, dep)| {
+                .map(|(name, orig)| {
                     unused_dep_keys(
                         name,
                         &format!("patch.{toml_url}",),
-                        dep.unused_keys(),
+                        orig.unused_keys(),
                         &mut manifest_ctx.warnings,
                     );
 
-                    let dep = dep_to_dependency(dep, name, manifest_ctx, None)?;
+                    let mut dep = dep_to_dependency(orig, name, manifest_ctx, None)?;
+
+                    if let manifest::TomlDependency::Detailed(details) = orig
+                        && let Some(patches) = details.patches.as_ref()
+                    {
+                        attach_patches_to_dependency(
+                            &mut dep,
+                            patches,
+                            &url,
+                            patch_files_enabled,
+                            manifest_ctx,
+                        )?;
+                    }
+
                     let loc = PatchLocation::Manifest(manifest_ctx.file.to_path_buf());
                     Ok(Patch { dep, loc })
                 })
@@ -2178,6 +2195,7 @@ pub(crate) fn config_patch_to_dependency<P: ResolveToPath + Clone>(
     source_id: SourceId,
     gctx: &GlobalContext,
     warnings: &mut Vec<String>,
+    patch_source_url: &Url,
 ) -> CargoResult<Dependency> {
     let manifest_ctx = &mut ManifestContext {
         deps: &mut Vec::new(),
@@ -2188,7 +2206,17 @@ pub(crate) fn config_patch_to_dependency<P: ResolveToPath + Clone>(
         // config path doesn't have manifest file path, and doesn't use it.
         file: Path::new("unused"),
     };
-    dep_to_dependency(config_patch, name, manifest_ctx, None)
+
+    let mut dep = dep_to_dependency(config_patch, name, manifest_ctx, None)?;
+
+    if let manifest::TomlDependency::Detailed(details) = config_patch
+        && let Some(patches) = details.patches.as_ref()
+    {
+        let enabled = gctx.cli_unstable().patch_files;
+        attach_patches_to_dependency(&mut dep, patches, patch_source_url, enabled, manifest_ctx)?;
+    }
+
+    Ok(dep)
 }
 
 fn dep_to_dependency<P: ResolveToPath + Clone>(
@@ -2430,6 +2458,62 @@ fn to_dependency_source_id<P: ResolveToPath + Clone>(
         }
         (None, None, None, None) => SourceId::crates_io(manifest_ctx.gctx),
     }
+}
+
+fn attach_patches_to_dependency<P: ResolveToPath + Clone>(
+    dep: &mut Dependency,
+    patches: &[P],
+    patch_source_url: &Url,
+    patch_files_enabled: bool,
+    manifest_ctx: &mut ManifestContext<'_, '_>,
+) -> CargoResult<()> {
+    let url = patch_source_url;
+    let name_in_toml = dep.name_in_toml().as_str();
+    let message = "see https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#patch-files about the status of this feature.";
+    if !patch_files_enabled {
+        manifest_ctx.warnings.push(format!(
+            "ignoring `patches` on patch for `{name_in_toml}` in `{url}`: {message}"
+        ));
+        return Ok(());
+    }
+
+    if patches.is_empty() {
+        bail!(
+            "patch for `{name_in_toml}` in `{url}` requires at least one patch file when patching with files"
+        );
+    }
+
+    if dep.source_id().is_path() {
+        bail!(
+            "patch for `{name_in_toml}` in `{url}` cannot use `patches` with a path dependency\n\
+             help: apply the patch to the source directly, or copy the source to a separate directory"
+        );
+    }
+
+    let manifest_dir = manifest_ctx.file.parent().unwrap();
+
+    let patches: Vec<_> = patches
+        .iter()
+        .map(|path| {
+            let path = path.resolve(manifest_ctx.gctx);
+            paths::normalize_path(&manifest_dir.join(&path))
+        })
+        .collect();
+
+    let mut cksum = Sha256::new();
+    for patch in &patches {
+        cksum
+            .update_path(patch)
+            .with_context(|| format!("failed to checksum {}", patch.display()))?;
+    }
+    let cksum = cksum.finish_hex();
+
+    let patch_info = PatchInfo::new(cksum, patches);
+    let source_id = SourceId::for_patches(dep.source_id(), patch_info)?;
+
+    dep.set_source_id(source_id);
+
+    Ok(())
 }
 
 pub(crate) fn lookup_path_base<'a>(
