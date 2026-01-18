@@ -1,15 +1,22 @@
 use crate::core::GitReference;
 use crate::core::PackageId;
 use crate::core::SourceKind;
+use crate::sources::patched::PatchedSource;
 use crate::sources::registry::CRATES_IO_HTTP_INDEX;
 use crate::sources::source::Source;
 use crate::sources::{CRATES_IO_DOMAIN, CRATES_IO_INDEX, CRATES_IO_REGISTRY, DirectorySource};
 use crate::sources::{GitSource, PathSource, RegistrySource};
 use crate::util::interning::InternedString;
 use crate::util::{CanonicalUrl, CargoResult, GlobalContext, IntoUrl, context};
+
 use anyhow::Context as _;
+use cargo_util::Sha256;
+use cargo_util_schemas::core::PatchChecksum;
 use serde::de;
 use serde::ser;
+use tracing::trace;
+use url::Url;
+
 use std::cmp::{self, Ordering};
 use std::collections::HashSet;
 use std::fmt::{self, Formatter};
@@ -18,8 +25,6 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use tracing::trace;
-use url::Url;
 
 static SOURCE_ID_CACHE: OnceLock<Mutex<HashSet<&'static SourceIdInner>>> = OnceLock::new();
 
@@ -60,7 +65,6 @@ struct SourceIdInner {
     /// e.g. registry coming from `--index` or Cargo.lock
     registry_key: Option<KeyOf>,
 }
-
 #[derive(Eq, PartialEq, Clone, Debug, Hash)]
 enum Precise {
     Locked,
@@ -116,6 +120,14 @@ impl SourceId {
             registry_key: key,
         });
         Ok(source_id)
+    }
+
+    /// Creates a `SourceId` object from an explicit kind and URL.
+    ///
+    /// This is useful for creating patched sources where the kind is
+    /// constructed externally (e.g., `SourceKind::Patched`).
+    pub fn new_with_kind(kind: SourceKind, url: Url) -> CargoResult<SourceId> {
+        Self::new(kind, url, None)
     }
 
     /// Interns the value and returns the wrapped type.
@@ -175,6 +187,26 @@ impl SourceId {
             "path" => {
                 let url = url.into_url()?;
                 SourceId::new(SourceKind::Path, url, None)
+            }
+            "patched" => {
+                let mut url = string.into_url()?;
+
+                // Extract patch checksum from query
+                let Some(cksum) = PatchChecksum::from_query(url.query_pairs()) else {
+                    anyhow::bail!(
+                        "patched source URL missing `{}` query parameter: `{string}`",
+                        PatchChecksum::KEY
+                    )
+                };
+
+                let query = query_string_without(&url, &[PatchChecksum::KEY]);
+                // For patched source, we keep url with underlying source id url.
+                // This should generally be sync with PackageIdSpec.
+                // TODO: should we keep precise (`#fragment`) in url?
+                url.set_query(if query.is_empty() { None } else { Some(&query) });
+                url.set_fragment(None);
+
+                SourceId::new(SourceKind::Patched(cksum), url, None)
             }
             kind => Err(anyhow::format_err!("unsupported source protocol: {}", kind)),
         }
@@ -396,7 +428,7 @@ impl SourceId {
         yanked_whitelist: &HashSet<PackageId>,
     ) -> CargoResult<Box<dyn Source + 'a>> {
         trace!("loading SourceId; {}", self);
-        match self.inner.kind {
+        match &self.inner.kind {
             SourceKind::Git(..) => Ok(Box::new(GitSource::new(self, gctx)?)),
             SourceKind::Path => {
                 let path = self
@@ -433,13 +465,14 @@ impl SourceId {
                     .expect("path sources cannot be remote");
                 Ok(Box::new(DirectorySource::new(&path, self, gctx)))
             }
+            SourceKind::Patched(_) => Ok(Box::new(PatchedSource::new(self, gctx)?)),
         }
     }
 
     /// Gets the Git reference if this is a git source, otherwise `None`.
     pub fn git_reference(self) -> Option<&'static GitReference> {
-        match self.inner.kind {
-            SourceKind::Git(ref s) => Some(s),
+        match &self.inner.kind {
+            SourceKind::Git(s) => Some(s),
             _ => None,
         }
     }
@@ -544,9 +577,36 @@ impl SourceId {
         }))
     }
 
+    /// Patches ourselves to a [`SourceKind::Patched`] source ID.
+    ///
+    /// The patch paths are registered in `gctx` for later retrieval by `PatchedSource`.
+    pub fn with_patches(
+        self,
+        patches: Vec<PathBuf>,
+        gctx: &GlobalContext,
+    ) -> CargoResult<SourceId> {
+        let mut hasher = Sha256::new();
+        for patch in &patches {
+            hasher
+                .update_path(patch)
+                .with_context(|| format!("failed to checksum {}", patch.display()))?;
+        }
+        let cksum = PatchChecksum(hasher.finish_hex());
+
+        gctx.register_patch_paths(cksum.clone(), patches);
+
+        let patched_kind = SourceKind::Patched(cksum);
+
+        // Use the same URL as the source being patched without fragment,
+        // See `SourceId::from_url`.
+        let mut url: Url = self.as_encoded_url().to_string().parse().expect("url");
+        url.set_fragment(None);
+        SourceId::new(patched_kind, url, None)
+    }
+
     /// Returns `true` if the remote registry is the standard <https://crates.io>.
     pub fn is_crates_io(self) -> bool {
-        match self.inner.kind {
+        match &self.inner.kind {
             SourceKind::Registry | SourceKind::SparseRegistry => {}
             _ => return false,
         }
@@ -576,7 +636,7 @@ impl SourceId {
             }
         }
         self.inner.kind.hash(into);
-        match self.inner.kind {
+        match &self.inner.kind {
             SourceKind::Git(_) => (&self).inner.canonical_url.hash(into),
             _ => (&self).inner.url.as_str().hash(into),
         }
@@ -657,8 +717,8 @@ fn url_display(url: &Url) -> String {
 
 impl fmt::Display for SourceId {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self.inner.kind {
-            SourceKind::Git(ref reference) => {
+        match &self.inner.kind {
+            SourceKind::Git(reference) => {
                 // Don't replace the URL display for git references,
                 // because those are kind of expected to be URLs.
                 write!(f, "{}", self.inner.url)?;
@@ -679,6 +739,9 @@ impl fmt::Display for SourceId {
             }
             SourceKind::LocalRegistry => write!(f, "registry `{}`", url_display(&self.inner.url)),
             SourceKind::Directory => write!(f, "dir {}", url_display(&self.inner.url)),
+            SourceKind::Patched(cksum) => {
+                write!(f, "patched {} ({cksum})", url_display(&self.inner.url))
+            }
         }
     }
 }
@@ -724,22 +787,54 @@ impl<'a> fmt::Display for SourceIdAsUrl<'a> {
         if let Some(protocol) = self.inner.kind.protocol() {
             write!(f, "{protocol}+")?;
         }
+
         write!(f, "{}", self.inner.url)?;
+
+        let mut query = String::new();
+        let mut fragment = String::new();
+
         if let SourceIdInner {
-            kind: SourceKind::Git(ref reference),
-            ref precise,
+            kind: SourceKind::Git(reference),
+            precise,
             ..
-        } = *self.inner
+        } = &self.inner
         {
-            if let Some(pretty) = reference.pretty_ref(self.encoded) {
-                write!(f, "?{}", pretty)?;
-            }
-            if let Some(precise) = precise.as_ref() {
-                write!(f, "#{}", precise)?;
-            }
+            query = reference
+                .pretty_ref(self.encoded)
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            fragment = precise.as_ref().map(|s| s.to_string()).unwrap_or_default();
         }
+
+        if let SourceKind::Patched(cksum) = &self.inner.kind {
+            query = cksum.with_query(query);
+        }
+
+        if !query.is_empty() {
+            write!(f, "?{query}")?;
+        }
+
+        if !fragment.is_empty() {
+            write!(f, "#{fragment}")?;
+        }
+
         Ok(())
     }
+}
+
+fn query_string_without(url: &Url, keys: &[&str]) -> String {
+    let query: String = url
+        .query_pairs()
+        .filter(|(k, _)| !keys.iter().any(|&key| key == k.as_ref()))
+        .fold(
+            url::form_urlencoded::Serializer::new(String::new()),
+            |mut ser, (k, v)| {
+                ser.append_pair(&k, &v);
+                ser
+            },
+        )
+        .finish();
+    query
 }
 
 impl KeyOf {
@@ -887,6 +982,19 @@ mod tests {
             assert_data_eq!(gen_hash(source_id), str!["10423446877655960172"].raw());
             assert_data_eq!(short_hash(&source_id), str!["6c8ad69db585a790"].raw());
         }
+
+        // Checksum computed from patch files content
+        let registry_source_id = SourceId::for_registry(&url).unwrap();
+        let gctx = GlobalContext::default().unwrap();
+        // Create a temp file with known content for stable hash
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let patch_file = tmp_dir.path().join("test.patch");
+        std::fs::write(&patch_file, b"test patch content").unwrap();
+        let source_id = registry_source_id
+            .with_patches(vec![patch_file], &gctx)
+            .unwrap();
+        assert_data_eq!(gen_hash(source_id), str!["5396584413601529519"].raw());
+        assert_data_eq!(short_hash(&source_id), str!["affe208dee84e44a"].raw());
     }
 
     #[test]

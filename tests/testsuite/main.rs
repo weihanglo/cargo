@@ -145,6 +145,7 @@ mod package;
 mod package_features;
 mod package_message_format;
 mod patch;
+mod patch_files;
 mod path;
 mod paths;
 mod pgo;

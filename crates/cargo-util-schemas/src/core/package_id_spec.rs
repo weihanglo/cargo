@@ -7,8 +7,9 @@ use url::Url;
 use crate::core::GitReference;
 use crate::core::PartialVersion;
 use crate::core::PartialVersionError;
-use crate::core::PatchInfo;
+use crate::core::PatchChecksum;
 use crate::core::SourceKind;
+use crate::lockfile::query_string_without;
 use crate::manifest::PackageName;
 use crate::restricted_names::NameValidationError;
 
@@ -142,12 +143,17 @@ impl PackageIdSpec {
                     url = strip_url_protocol(&url);
                 }
                 "patched" => {
-                    let info =
-                        PatchInfo::from_query(url.query_pairs()).map_err(ErrorKind::PatchInfo)?;
-                    url.set_query(None);
-                    kind = Some(SourceKind::Patched(info));
-                    // We don't strip protocol and leave `patched` as part of URL
-                    // in order to distinguish them.
+                    let Some(cksum) = PatchChecksum::from_query(url.query_pairs()) else {
+                        return Err(ErrorKind::UnexpectedQueryString(url).into());
+                    };
+
+                    // Here we extract `patched+` protocol and related params from the url
+                    // so that the url stored here is the underlying package id spec.
+                    // TODO: do we want to recursively parse it to verify it is valid?
+                    kind = Some(SourceKind::Patched(cksum));
+                    url = strip_url_protocol(&url);
+                    let query = query_string_without(&url, &[PatchChecksum::KEY]);
+                    url.set_query(if query.is_empty() { None } else { Some(&query) });
                 }
                 kind => return Err(ErrorKind::UnsupportedProtocol(kind.into()).into()),
             }
@@ -244,15 +250,19 @@ impl fmt::Display for PackageIdSpec {
                 if let Some(protocol) = self.kind.as_ref().and_then(|k| k.protocol()) {
                     write!(f, "{protocol}+")?;
                 }
-                write!(f, "{}", url)?;
+                write!(f, "{url}")?;
                 match self.kind.as_ref() {
                     Some(SourceKind::Git(git_ref)) => {
                         if let Some(pretty) = git_ref.pretty_ref(true) {
                             write!(f, "?{pretty}")?;
                         }
                     }
-                    Some(SourceKind::Patched(info)) => {
-                        write!(f, "?{}", info.as_query())?;
+                    Some(SourceKind::Patched(cksum)) => {
+                        if url.query().is_some() {
+                            write!(f, "&{}", cksum.as_query())?;
+                        } else {
+                            write!(f, "?{}", cksum.as_query())?;
+                        }
                     }
                     _ => {}
                 }
@@ -328,7 +338,7 @@ enum ErrorKind {
     #[error("`path+{0}` is unsupported; `path+file` and `file` schemes are supported")]
     UnsupportedPathPlusScheme(String),
 
-    #[error("cannot have a query string in a pkgid: {0}")]
+    #[error("unexpected query string in a pkgid: {0}")]
     UnexpectedQueryString(Url),
 
     #[error("pkgid urls must have at least one path component: {0}")]
@@ -342,9 +352,6 @@ enum ErrorKind {
 
     #[error(transparent)]
     PartialVersion(#[from] crate::core::PartialVersionError),
-
-    #[error(transparent)]
-    PatchInfo(#[from] crate::core::PatchInfoError),
 }
 
 #[cfg(test)]
@@ -352,8 +359,7 @@ mod tests {
     use super::ErrorKind;
     use super::PackageIdSpec;
     use crate::core::GitReference;
-    use crate::core::PatchInfo;
-    use crate::core::PatchInfoError;
+    use crate::core::PatchChecksum;
     use crate::core::SourceKind;
     use url::Url;
 
@@ -746,18 +752,47 @@ mod tests {
             "path+file:///path/to/my/project/foo#foo::bar@1.1.8",
         );
 
+        // Patched registry source requires explicit registry+ prefix
         ok(
-            "patched+https://crates.io/foo?patch-cksum=965c324544e22773&patch=%2Fto%2Fa.patch&patch=%2Fb.patch#bar@1.2.0",
+            "patched+registry+https://crates.io/foo?patch-cksum=965c324544e22773#bar@1.2.0",
             PackageIdSpec {
                 name: String::from("bar"),
                 version: Some("1.2.0".parse().unwrap()),
-                url: Some(Url::parse("patched+https://crates.io/foo").unwrap()),
-                kind: Some(SourceKind::Patched(PatchInfo::new(
-                    "965c324544e22773".to_string(),
-                    vec!["/to/a.patch".into(), "/b.patch".into()],
+                url: Some(Url::parse("https://crates.io/foo").unwrap()),
+                kind: Some(SourceKind::Patched(PatchChecksum(
+                    "965c324544e22773".to_owned(),
                 ))),
             },
-            "patched+https://crates.io/foo?patch-cksum=965c324544e22773&patch=%2Fto%2Fa.patch&patch=%2Fb.patch#bar@1.2.0",
+            "patched+registry+https://crates.io/foo?patch-cksum=965c324544e22773#bar@1.2.0",
+        );
+
+        // Patched registry source (crates.io index)
+        ok(
+            "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=46806b943777e31e#bar@1.0.0",
+            // Recursively parse to get inner kind, map error to original source
+            PackageIdSpec {
+                name: String::from("bar"),
+                version: Some("1.0.0".parse().unwrap()),
+                url: Some(Url::parse("https://github.com/rust-lang/crates.io-index").unwrap()),
+                kind: Some(SourceKind::Patched(PatchChecksum(
+                    "46806b943777e31e".to_owned(),
+                ))),
+            },
+            "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=46806b943777e31e#bar@1.0.0",
+        );
+
+        // Patched git source with branch
+        ok(
+            "patched+git+https://github.com/foo/bar?branch=main&patch-cksum=abc123def456#baz@2.0.0",
+            PackageIdSpec {
+                name: String::from("baz"),
+                version: Some("2.0.0".parse().unwrap()),
+                url: Some(Url::parse("https://github.com/foo/bar").unwrap()),
+                kind: Some(SourceKind::Patched(PatchChecksum(
+                    "abc123def456".to_owned(),
+                ))),
+            },
+            "patched+git+https://github.com/foo/bar?branch=main&patch-cksum=abc123def456#baz@2.0.0",
         );
     }
 
@@ -800,12 +835,8 @@ mod tests {
         err!("registry+https://github.com", ErrorKind::NameValidation(_));
         err!("https://crates.io/1foo#1.2.3", ErrorKind::NameValidation(_));
         err!(
-            "patched+https://crates.io/foo?patch=x.patch#bar@1.2.0",
-            ErrorKind::PatchInfo(PatchInfoError("patch-cksum"))
-        );
-        err!(
-            "patched+https://crates.io/foo?patch-cksum=abc#bar@1.2.0",
-            ErrorKind::PatchInfo(PatchInfoError("patch"))
+            "patched+https://crates.io/foo?patch-checksum=deadbeef#bar@1.2.0",
+            ErrorKind::UnexpectedQueryString(_)
         );
     }
 }

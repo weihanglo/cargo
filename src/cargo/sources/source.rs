@@ -414,4 +414,9 @@ impl<'src> SourceMap<'src> {
             self.map.entry(key).or_insert(value);
         }
     }
+
+    /// Removes and returns the source for the given ID.
+    pub fn remove(&mut self, id: SourceId) -> Option<Box<dyn Source + 'src>> {
+        self.map.remove(&id)
+    }
 }

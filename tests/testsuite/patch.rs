@@ -9,6 +9,106 @@ use cargo_test_support::registry::{self, Package};
 use cargo_test_support::{basic_manifest, project, str};
 
 #[cargo_test]
+fn patch_crates_io_with_git_workspace() {
+    // Test: patch multiple crates-io packages with a single git workspace.
+    // This verifies that git source is shared (per-repo), not per-package,
+    // and that workspace inheritance works correctly.
+    Package::new("bar", "1.0.0")
+        .file(
+            "src/lib.rs",
+            "pub fn bar() -> &'static str { \"registry\" }",
+        )
+        .publish();
+    Package::new("baz", "1.0.0")
+        .file(
+            "src/lib.rs",
+            "pub fn baz() -> &'static str { \"registry\" }",
+        )
+        .publish();
+
+    // Create a git repo with workspace containing both crates using workspace inheritance
+    let git_project = git::repo(&paths::root().join("my-workspace"))
+        .file(
+            "Cargo.toml",
+            r#"
+                [workspace]
+                members = ["bar", "baz"]
+
+                [workspace.package]
+                version = "1.0.0"
+                edition = "2021"
+            "#,
+        )
+        .file(
+            "bar/Cargo.toml",
+            r#"
+                [package]
+                name = "bar"
+                version.workspace = true
+                edition.workspace = true
+            "#,
+        )
+        .file(
+            "bar/src/lib.rs",
+            r#"pub fn bar() -> &'static str { "git" }"#,
+        )
+        .file(
+            "baz/Cargo.toml",
+            r#"
+                [package]
+                name = "baz"
+                version.workspace = true
+                edition.workspace = true
+            "#,
+        )
+        .file(
+            "baz/src/lib.rs",
+            r#"pub fn baz() -> &'static str { "git" }"#,
+        )
+        .build();
+    let url = git_project.url();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            &format!(
+                r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2021"
+
+                [dependencies]
+                bar = "1"
+                baz = "1"
+
+                [patch.crates-io]
+                bar = {{ git = "{url}" }}
+                baz = {{ git = "{url}" }}
+                "#
+            ),
+        )
+        .file(
+            "src/main.rs",
+            r#"
+                fn main() {
+                    println!("bar={}", bar::bar());
+                    println!("baz={}", baz::baz());
+                }
+            "#,
+        )
+        .build();
+
+    p.cargo("run")
+        .with_stdout_data(str![[r#"
+bar=git
+baz=git
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
 fn replace() {
     Package::new("bar", "0.1.0").publish();
     Package::new("baz", "0.1.0")
@@ -402,9 +502,9 @@ Caused by:
   if a proxy or similar is necessary `net.git-fetch-with-cli` may help here
   https://doc.rust-lang.org/cargo/reference/config.html#netgit-fetch-with-cli
 
-  [NOTE] GitHub url https://github.com/rust-lang/does-not-exist/pull/123 is not a repository. 
-  [HELP] Replace the dependency with 
-         `git = "https://github.com/rust-lang/does-not-exist.git" rev = "refs/pull/123/head"` 
+  [NOTE] GitHub url https://github.com/rust-lang/does-not-exist/pull/123 is not a repository.
+  [HELP] Replace the dependency with
+         `git = "https://github.com/rust-lang/does-not-exist.git" rev = "refs/pull/123/head"`
      to specify pull requests as dependencies' revision.
 
 Caused by:

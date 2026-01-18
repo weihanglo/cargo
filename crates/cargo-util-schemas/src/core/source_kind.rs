@@ -1,5 +1,4 @@
 use std::cmp::Ordering;
-use std::path::PathBuf;
 
 /// The possible kinds of code source.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,8 +15,8 @@ pub enum SourceKind {
     LocalRegistry,
     /// A directory-based registry.
     Directory,
-    /// A patched source (unstable)
-    Patched(PatchInfo),
+    /// A patched source (unstable).
+    Patched(PatchChecksum),
 }
 
 // The hash here is important for what folder packages get downloaded into.
@@ -29,10 +28,7 @@ impl std::hash::Hash for SourceKind {
         core::mem::discriminant(self).hash(state);
         match self {
             SourceKind::Git(git) => git.hash(state),
-            SourceKind::Patched(info) => {
-                // Not hashing patch file paths for portability.
-                info.checksum.hash(state)
-            }
+            SourceKind::Patched(cksum) => cksum.hash(state),
             _ => {}
         }
     }
@@ -48,14 +44,12 @@ impl SourceKind {
             SourceKind::SparseRegistry => None,
             SourceKind::LocalRegistry => Some("local-registry"),
             SourceKind::Directory => Some("directory"),
-            // Patched source URL already includes the `patched+` prefix,
-            // see `SourceId::for_patches`
-            SourceKind::Patched(_) => None,
+            SourceKind::Patched(_) => Some("patched"),
         }
     }
 }
 
-// The ordering here is important for how packages are serialized package ID spec.
+// The ordering here is important for how packages are serialized into lock files.
 // We implement it manually to callout the stability guarantee.
 // See https://github.com/rust-lang/cargo/pull/9397 for the history.
 impl Ord for SourceKind {
@@ -178,79 +172,53 @@ impl<'a> std::fmt::Display for PrettyRef<'a> {
     }
 }
 
-/// Information to find the source package and patch files.
+/// Content-based checksum of all patch files.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PatchInfo {
-    /// Content-based checksum of all patch files.
-    checksum: String,
-    /// Absolute paths to patch files.
-    ///
-    /// For portability reason, we don't encode this field into lockfile.
-    /// See the counterpart [`TomlLockfilePatchInfo`](crate::lockfile::TomlLockfilePatchInfo).
-    patches: Vec<PathBuf>,
-}
+pub struct PatchChecksum(pub String);
 
-impl PatchInfo {
-    pub fn new(checksum: String, patches: Vec<PathBuf>) -> PatchInfo {
-        PatchInfo { checksum, patches }
+impl PatchChecksum {
+    /// Query string key in Source URL
+    pub const KEY: &str = "patch-cksum";
+
+    const SHORT_HASH_LEN: usize = 16;
+
+    /// Returns the short truncated checksum.
+    pub fn short(&self) -> &str {
+        &self.0[..Self::SHORT_HASH_LEN.min(self.0.len())]
     }
 
-    /// Collects patch information from query string.
-    ///
-    /// * `patch-cksum` --- Content-based checksum of all patch files.
-    /// * `patch` --- Paths to patch files. Multiple occurrences allowed.
+    /// Returns the full checksum.
+    pub fn full(&self) -> &str {
+        &self.0
+    }
+
+    /// Collects patch checksum from query string.
     pub fn from_query(
         query_pairs: impl Iterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
-    ) -> Result<PatchInfo, PatchInfoError> {
-        let mut patches = Vec::new();
-        let mut cksum = None;
+    ) -> Option<PatchChecksum> {
         for (k, v) in query_pairs {
-            let v = v.as_ref();
-            match k.as_ref() {
-                "patch-cksum" => cksum = Some(v.to_owned()),
-                "patch" => patches.push(PathBuf::from(v)),
-                _ => {}
+            if k.as_ref() == Self::KEY {
+                return Some(Self(v.as_ref().to_owned()));
             }
         }
-        let Some(cksum) = cksum else {
-            return Err(PatchInfoError("patch-cksum"));
-        };
-        if patches.is_empty() {
-            return Err(PatchInfoError("patch"));
-        }
-        Ok(PatchInfo::new(cksum, patches))
+        None
     }
 
     /// As a URL query string.
-    pub fn as_query(&self) -> PatchInfoQuery<'_> {
-        PatchInfoQuery(self)
+    pub fn as_query(&self) -> String {
+        self.with_query(String::new())
     }
 
-    pub fn patches(&self) -> &[PathBuf] {
-        self.patches.as_slice()
-    }
-
-    pub fn checksum(&self) -> &str {
-        &self.checksum
+    /// Appends to an existing URL query string and returns the result.
+    pub fn with_query(&self, query: String) -> String {
+        let mut serializer = url::form_urlencoded::Serializer::new(query);
+        serializer.append_pair(Self::KEY, &self.0);
+        serializer.finish()
     }
 }
 
-/// A [`PatchInfo`] that can be `Display`ed as URL query string.
-pub struct PatchInfoQuery<'a>(&'a PatchInfo);
-
-impl<'a> std::fmt::Display for PatchInfoQuery<'a> {
+impl std::fmt::Display for PatchChecksum {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut serializer = url::form_urlencoded::Serializer::new(String::new());
-        serializer.append_pair("patch-cksum", &self.0.checksum);
-        for patch in &self.0.patches {
-            let path = patch.to_str().unwrap();
-            serializer.append_pair("patch", path);
-        }
-        f.write_str(&serializer.finish())
+        f.write_str(&self.0)
     }
 }
-
-/// Error parsing patch info from URL query string.
-#[derive(Debug, thiserror::Error)]
-#[error("missing query string `{0}`")]
-pub struct PatchInfoError(pub &'static str);
