@@ -1,15 +1,23 @@
 use crate::core::GitReference;
 use crate::core::PackageId;
 use crate::core::SourceKind;
+use crate::sources::patched::PatchedSource;
 use crate::sources::registry::CRATES_IO_HTTP_INDEX;
 use crate::sources::source::Source;
 use crate::sources::{CRATES_IO_DOMAIN, CRATES_IO_INDEX, CRATES_IO_REGISTRY, DirectorySource};
 use crate::sources::{GitSource, PathSource, RegistrySource};
 use crate::util::interning::InternedString;
 use crate::util::{CanonicalUrl, CargoResult, GlobalContext, IntoUrl, context};
+
 use anyhow::Context as _;
+use cargo_util::Sha256;
+use cargo_util_schemas::core::PatchChecksum;
+use cargo_util_schemas::url_ext::UrlExt as _;
 use serde::de;
 use serde::ser;
+use tracing::trace;
+use url::Url;
+
 use std::cmp::{self, Ordering};
 use std::collections::HashSet;
 use std::fmt::{self, Formatter};
@@ -18,8 +26,6 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use tracing::trace;
-use url::Url;
 
 static SOURCE_ID_CACHE: OnceLock<Mutex<HashSet<&'static SourceIdInner>>> = OnceLock::new();
 
@@ -60,7 +66,6 @@ struct SourceIdInner {
     /// e.g. registry coming from `--index` or Cargo.lock
     registry_key: Option<KeyOf>,
 }
-
 #[derive(Eq, PartialEq, Clone, Debug, Hash)]
 enum Precise {
     Locked,
@@ -116,6 +121,14 @@ impl SourceId {
             registry_key: key,
         });
         Ok(source_id)
+    }
+
+    /// Creates a `SourceId` object from an explicit kind and URL.
+    ///
+    /// This is useful for creating patched sources where the kind is
+    /// constructed externally (e.g., `SourceKind::Patched`).
+    pub fn new_with_kind(kind: SourceKind, url: Url) -> CargoResult<SourceId> {
+        Self::new(kind, url, None)
     }
 
     /// Interns the value and returns the wrapped type.
@@ -175,6 +188,28 @@ impl SourceId {
             "path" => {
                 let url = url.into_url()?;
                 SourceId::new(SourceKind::Path, url, None)
+            }
+            "patched" => {
+                let mut url = url.into_url()?;
+
+                // Extract patch checksum from query
+                let Some(cksum) = PatchChecksum::from_query(url.query_pairs()) else {
+                    anyhow::bail!(
+                        "patched source URL missing `{}` query parameter: `{url}`",
+                        PatchChecksum::KEY
+                    )
+                };
+
+                // For patched source, we keep url with underlying source id url.
+                // This should generally be sync with PackageIdSpec.
+                url.remove_query_params(&[PatchChecksum::KEY]);
+
+                // Recursively parse it to ensure the underlying url is valid.
+                if let Err(e) = SourceId::from_url(url.as_str()) {
+                    anyhow::bail!("invalid patched source `{string}`: {e}");
+                }
+
+                SourceId::new(SourceKind::Patched(cksum), url, None)
             }
             kind => Err(anyhow::format_err!("unsupported source protocol: {}", kind)),
         }
@@ -396,7 +431,7 @@ impl SourceId {
         yanked_whitelist: &HashSet<PackageId>,
     ) -> CargoResult<Box<dyn Source + 'a>> {
         trace!("loading SourceId; {}", self);
-        match self.inner.kind {
+        match &self.inner.kind {
             SourceKind::Git(..) => Ok(Box::new(GitSource::new(self, gctx)?)),
             SourceKind::Path => {
                 let path = self
@@ -433,13 +468,14 @@ impl SourceId {
                     .expect("path sources cannot be remote");
                 Ok(Box::new(DirectorySource::new(&path, self, gctx)))
             }
+            SourceKind::Patched(_) => Ok(Box::new(PatchedSource::new(self, gctx)?)),
         }
     }
 
     /// Gets the Git reference if this is a git source, otherwise `None`.
     pub fn git_reference(self) -> Option<&'static GitReference> {
-        match self.inner.kind {
-            SourceKind::Git(ref s) => Some(s),
+        match &self.inner.kind {
+            SourceKind::Git(s) => Some(s),
             _ => None,
         }
     }
@@ -544,9 +580,38 @@ impl SourceId {
         }))
     }
 
+    /// Patches ourselves to a [`SourceKind::Patched`] source ID.
+    ///
+    /// The patch paths are registered in `gctx` for later retrieval by `PatchedSource`.
+    pub fn with_patches(
+        self,
+        patches: Vec<PathBuf>,
+        gctx: &GlobalContext,
+    ) -> CargoResult<SourceId> {
+        let mut hasher = Sha256::new();
+        for patch in &patches {
+            hasher
+                .update_path(patch)
+                .with_context(|| format!("failed to checksum {}", patch.display()))?;
+        }
+        let cksum = PatchChecksum::new(hasher.finish_hex());
+
+        gctx.register_patch_paths(cksum.clone(), patches);
+
+        let patched_kind = SourceKind::Patched(cksum);
+
+        // Use the same URL as the source being patched without fragment,
+        // See `SourceId::from_url`.
+        let url: Url = self.as_encoded_url().to_string().parse().expect("url");
+        // Preserve registry key so the descriptive display
+        // can show "crates-io" instead of the full URL
+        let registry_key = self.inner.registry_key.clone();
+        SourceId::new(patched_kind, url, registry_key)
+    }
+
     /// Returns `true` if the remote registry is the standard <https://crates.io>.
     pub fn is_crates_io(self) -> bool {
-        match self.inner.kind {
+        match &self.inner.kind {
             SourceKind::Registry | SourceKind::SparseRegistry => {}
             _ => return false,
         }
@@ -576,7 +641,7 @@ impl SourceId {
             }
         }
         self.inner.kind.hash(into);
-        match self.inner.kind {
+        match &self.inner.kind {
             SourceKind::Git(_) => (&self).inner.canonical_url.hash(into),
             _ => (&self).inner.url.as_str().hash(into),
         }
@@ -657,8 +722,8 @@ fn url_display(url: &Url) -> String {
 
 impl fmt::Display for SourceId {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self.inner.kind {
-            SourceKind::Git(ref reference) => {
+        match &self.inner.kind {
+            SourceKind::Git(reference) => {
                 // Don't replace the URL display for git references,
                 // because those are kind of expected to be URLs.
                 write!(f, "{}", self.inner.url)?;
@@ -679,6 +744,12 @@ impl fmt::Display for SourceId {
             }
             SourceKind::LocalRegistry => write!(f, "registry `{}`", url_display(&self.inner.url)),
             SourceKind::Directory => write!(f, "dir {}", url_display(&self.inner.url)),
+            SourceKind::Patched(cksum) => {
+                let cksum = cksum.as_str();
+                let cksum = &cksum[..cksum.len().min(8)];
+                let url = self.display_registry_name();
+                write!(f, "from {url} with patch {cksum}",)
+            }
         }
     }
 }
@@ -724,20 +795,32 @@ impl<'a> fmt::Display for SourceIdAsUrl<'a> {
         if let Some(protocol) = self.inner.kind.protocol() {
             write!(f, "{protocol}+")?;
         }
-        write!(f, "{}", self.inner.url)?;
-        if let SourceIdInner {
-            kind: SourceKind::Git(ref reference),
-            ref precise,
-            ..
-        } = *self.inner
-        {
-            if let Some(pretty) = reference.pretty_ref(self.encoded) {
-                write!(f, "?{}", pretty)?;
+
+        match &self.inner.kind {
+            SourceKind::Path
+            | SourceKind::Registry
+            | SourceKind::SparseRegistry
+            | SourceKind::LocalRegistry
+            | SourceKind::Directory => {
+                write!(f, "{}", self.inner.url)?;
             }
-            if let Some(precise) = precise.as_ref() {
-                write!(f, "#{}", precise)?;
+            SourceKind::Git(reference) => {
+                write!(f, "{}", self.inner.url)?;
+                if let Some(pretty) = reference.pretty_ref(self.encoded) {
+                    write!(f, "?{pretty}")?;
+                }
+                if let Some(precise) = self.inner.precise.as_ref() {
+                    write!(f, "#{precise}")?;
+                }
+            }
+            SourceKind::Patched(cksum) => {
+                let mut url = self.inner.url.clone();
+                url.query_pairs_mut()
+                    .append_pair(PatchChecksum::KEY, cksum.as_str());
+                write!(f, "{url}")?;
             }
         }
+
         Ok(())
     }
 }
@@ -887,15 +970,26 @@ mod tests {
             assert_data_eq!(gen_hash(source_id), str!["10423446877655960172"].raw());
             assert_data_eq!(short_hash(&source_id), str!["6c8ad69db585a790"].raw());
         }
+
+        let source_id = {
+            let to_patch = SourceId::for_registry(&url).unwrap();
+            let tmp_dir = tempfile::tempdir().unwrap();
+            let gctx = GlobalContext::default().unwrap();
+            let patch_file = tmp_dir.path().join("test.patch");
+            std::fs::write(&patch_file, b"content").unwrap();
+            to_patch.with_patches(vec![patch_file], &gctx).unwrap()
+        };
+        assert_data_eq!(gen_hash(source_id), str!["17404058201164849255"].raw());
+        assert_data_eq!(short_hash(&source_id), str!["67a0a72ab9a287f1"].raw());
     }
 
     #[test]
     fn serde_roundtrip() {
-        let url = "sparse+https://my-crates.io/".into_url().unwrap();
-        let source_id = SourceId::for_registry(&url).unwrap();
+        let url = "sparse+https://my-crates.io/";
+        let source_id = SourceId::for_registry(&url.into_url().unwrap()).unwrap();
         let formatted = format!("{}", source_id.as_url());
         let deserialized = SourceId::from_url(&formatted).unwrap();
-        assert_eq!(formatted, "sparse+https://my-crates.io/");
+        assert_eq!(formatted, url);
         assert_eq!(source_id, deserialized);
     }
 
@@ -918,6 +1012,25 @@ mod tests {
             ser1,
             "git+https://host/path?branch=*-._%2B20%2530+Z%2Fz%23foo%3Dbar%26zap%5B%5D%3Fto%5C%28%29%27%22"
         );
+    }
+
+    #[test]
+    fn patched_serde_roundtrip() {
+        let url = "file:///tmp/ws/crate".into_url().unwrap();
+        let source_id = {
+            let branch = GitReference::Branch("main".to_owned());
+            let to_patch = SourceId::for_git(&url, branch).unwrap();
+            let tmp_dir = tempfile::tempdir().unwrap();
+            let gctx = GlobalContext::default().unwrap();
+            let patch_file = tmp_dir.path().join("test.patch");
+            std::fs::write(&patch_file, b"content").unwrap();
+            to_patch.with_patches(vec![patch_file], &gctx).unwrap()
+        };
+        let formatted = format!("{}", source_id.as_url());
+        let deserialized = SourceId::from_url(&formatted).unwrap();
+        let literal = "patched+git+file:///tmp/ws/crate?branch=main&patch-cksum=ed7002b439e9ac845f22357d822bac1444730fbdb6016d3ec9432297b9ec9f73";
+        assert_eq!(formatted, literal);
+        assert_eq!(source_id, deserialized);
     }
 }
 

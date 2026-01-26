@@ -112,18 +112,25 @@
 //!   format.
 
 use super::{Resolve, ResolveVersion};
+use crate::core::SourceKind;
 use crate::core::{Dependency, GitReference, Package, PackageId, Patch, SourceId, Workspace};
+use crate::util::CanonicalUrl;
+use crate::util::IntoUrl;
 use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
 use crate::util::{Graph, internal};
+
 use anyhow::{Context as _, bail};
+use cargo_util_schemas::core::PatchChecksum;
 use cargo_util_schemas::lockfile::{
     TomlLockfile, TomlLockfileDependency, TomlLockfilePackageId, TomlLockfilePatch,
     TomlLockfileSourceId,
 };
 use serde::ser;
-use std::collections::{HashMap, HashSet};
 use tracing::debug;
+
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// Convert a `Cargo.lock` to a Resolve.
 ///
@@ -139,6 +146,7 @@ pub fn into_resolve(
     ws: &Workspace<'_>,
 ) -> CargoResult<Resolve> {
     let path_deps: HashMap<String, HashMap<semver::Version, SourceId>> = build_path_deps(ws)?;
+    let patched_deps = build_patched_deps(ws)?;
     let mut checksums = HashMap::new();
 
     let mut version = match resolve.version {
@@ -189,8 +197,9 @@ pub fn into_resolve(
             let id = match pkg
                 .source
                 .as_ref()
-                .map(|source| SourceId::from_url(&source.source_str()))
+                .map(|source| source_id_from_lockfile(source, &patched_deps))
                 .transpose()?
+                .flatten()
                 .or_else(|| get_source_id(&path_deps, &pkg).copied())
             {
                 // We failed to find a local package in the workspace.
@@ -359,8 +368,9 @@ pub fn into_resolve(
         let id = match pkg
             .source
             .as_ref()
-            .map(|source| SourceId::from_url(&source.source_str()))
+            .map(|source| source_id_from_lockfile(source, &patched_deps))
             .transpose()?
+            .flatten()
             .or_else(|| get_source_id(&path_deps, &pkg).copied())
         {
             Some(src) => PackageId::try_new(&pkg.name, &pkg.version, src)?,
@@ -425,6 +435,80 @@ pub fn into_resolve(
             None
         })
     }
+}
+
+/// Convert a lockfile source to a SourceId.
+///
+/// For patched sources, looks up the full SourceId (with paths) from the manifest.
+/// If not found in manifest it will later fall back to `path_deps`.
+fn source_id_from_lockfile(
+    source: &TomlLockfileSourceId,
+    patched_deps: &HashMap<(CanonicalUrl, PatchChecksum), SourceId>,
+) -> CargoResult<Option<SourceId>> {
+    match source.kind() {
+        SourceKind::Patched(cksum) => {
+            // For patched sources, we need to look up the full SourceId from manifest
+            // because lockfile only stores checksum, not paths.
+            // Extract underlying URL by stripping "patched+" prefix and query string
+            let source_str = source.source_str();
+            let underlying_url = source_str
+                .strip_prefix("patched+")
+                .expect("patched source should have patched+ prefix");
+            let underlying_url = if let Some(idx) = underlying_url.find('?') {
+                &underlying_url[..idx]
+            } else {
+                underlying_url
+            };
+            let underlying_url = underlying_url.into_url()?;
+            let canonical_url = CanonicalUrl::new(&underlying_url)?;
+
+            match patched_deps.get(&(canonical_url, cksum.clone())) {
+                Some(source_id) => Ok(Some(*source_id)),
+                None => {
+                    // Patch not found in manifest - either removed or contents changed.
+                    // Return None to skip this entry (similar to missing path deps).
+                    // The resolver will re-resolve with current manifest state.
+                    let cksum = cksum.as_str();
+                    debug!(
+                        "patched source with checksum `{cksum}` not found in manifest, skipping",
+                    );
+                    Ok(None)
+                }
+            }
+        }
+        _ => {
+            // For non-patched sources, use the standard from_url parsing
+            Ok(Some(SourceId::from_url(source.source_str())?))
+        }
+    }
+}
+
+/// Build a map of patched sources from the workspace manifest.
+///
+/// This is used to look up full SourceIds (with paths) when parsing lockfile,
+/// since lockfile only stores checksums for patched sources.
+fn build_patched_deps(
+    ws: &Workspace<'_>,
+) -> CargoResult<HashMap<(CanonicalUrl, PatchChecksum), SourceId>> {
+    let mut ret = HashMap::new();
+
+    for (_url, patches) in ws.root_patch()?.iter() {
+        for Patch { dep, loc: _ } in patches {
+            let source_id = dep.source_id();
+            if let SourceKind::Patched(cksum) = source_id.kind() {
+                // Get the underlying source URL (without patched+ prefix)
+                let mut underlying_url = source_id.url().clone();
+                underlying_url.set_query(None);
+                let url_str = underlying_url.as_str();
+                let url_str = url_str.strip_prefix("patched+").unwrap_or(url_str);
+                let underlying_url = url_str.into_url()?;
+                let canonical_url = CanonicalUrl::new(&underlying_url)?;
+                ret.insert((canonical_url, cksum.clone()), source_id);
+            }
+        }
+    }
+
+    Ok(ret)
 }
 
 fn build_path_deps(

@@ -12,7 +12,7 @@
 use std::collections::{HashMap, HashSet};
 use std::task::{Poll, ready};
 
-use crate::core::{Dependency, PackageId, PackageSet, Patch, SourceId, Summary};
+use crate::core::{Dependency, PackageId, PackageSet, Patch, SourceId, SourceKind, Summary};
 use crate::sources::IndexSummary;
 use crate::sources::config::SourceConfigMap;
 use crate::sources::source::QueryKind;
@@ -446,7 +446,11 @@ impl<'gctx> PackageRegistry<'gctx> {
                     unlock_patches.push(((*orig_patch).clone(), unlock_id));
                 }
 
-                if *summary.package_id().source_id().canonical_url() == canonical {
+                // For patched sources, the canonical_url will match but kind is different.
+                // Only check same-source for non-patched sources.
+                let source_id = summary.package_id().source_id();
+                let is_patched = matches!(source_id.kind(), SourceKind::Patched(_));
+                if !is_patched && *source_id.canonical_url() == canonical {
                     return Err(anyhow::anyhow!(
                         "patch for `{}` points to the same source, but patches must point to different sources\n\
                         help: check `{}` patch definition for `{}` in `{}`",

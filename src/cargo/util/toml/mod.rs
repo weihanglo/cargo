@@ -11,9 +11,7 @@ use crate::AlreadyPrintedError;
 use crate::core::summary::MissingDependencyError;
 use anyhow::{Context as _, anyhow, bail};
 use cargo_platform::Platform;
-use cargo_util::Sha256;
 use cargo_util::paths;
-use cargo_util_schemas::core::PatchInfo;
 use cargo_util_schemas::manifest::{
     self, PackageName, PathBaseName, TomlDependency, TomlDetailedDependency, TomlManifest,
     TomlPackageBuild, TomlWorkspace,
@@ -2500,16 +2498,7 @@ fn attach_patches_to_dependency<P: ResolveToPath + Clone>(
         })
         .collect();
 
-    let mut cksum = Sha256::new();
-    for patch in &patches {
-        cksum
-            .update_path(patch)
-            .with_context(|| format!("failed to checksum {}", patch.display()))?;
-    }
-    let cksum = cksum.finish_hex();
-
-    let patch_info = PatchInfo::new(cksum, patches);
-    let source_id = SourceId::for_patches(dep.source_id(), patch_info)?;
+    let source_id = dep.source_id().with_patches(patches, manifest_ctx.gctx)?;
 
     dep.set_source_id(source_id);
 

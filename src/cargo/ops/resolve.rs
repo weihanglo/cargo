@@ -55,6 +55,7 @@
 //! [source implementations]: crate::sources
 //! [`Downloads`]: crate::core::package::Downloads
 
+use crate::GlobalContext;
 use crate::core::Dependency;
 use crate::core::GitReference;
 use crate::core::PackageId;
@@ -62,6 +63,7 @@ use crate::core::PackageIdSpec;
 use crate::core::PackageIdSpecQuery;
 use crate::core::PackageSet;
 use crate::core::SourceId;
+use crate::core::SourceKind;
 use crate::core::Workspace;
 use crate::core::compiler::{CompileKind, RustcTargetData};
 use crate::core::registry::{LockedPatchDependency, PackageRegistry};
@@ -87,6 +89,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use tracing::{debug, trace};
+use url::Url;
 
 /// Filter for keep using Package ID from previous lockfile.
 type Keep<'a> = &'a dyn Fn(&PackageId) -> bool;
@@ -900,8 +903,15 @@ fn register_patch_entries(
     version_prefs: &mut VersionPreferences,
     keep_previous: Keep<'_>,
 ) -> CargoResult<HashSet<PackageId>> {
+    let root_patch = ws.root_patch()?;
+
+    // Check for conflicting patch-files on the same git source.
+    // For git sources, we do per-repo copying, so all packages from the same
+    // git repo must use the same patch files.
+    check_git_patch_conflicts(ws.gctx(), &root_patch)?;
+
     let mut avoid_patch_ids = HashSet::new();
-    for (url, patches) in ws.root_patch()?.iter() {
+    for (url, patches) in root_patch.iter() {
         for patch in patches {
             version_prefs.prefer_dependency(patch.dep.clone());
         }
@@ -1003,6 +1013,76 @@ fn register_patch_entries(
     }
 
     Ok(avoid_patch_ids)
+}
+
+/// Checks that all patches for packages from the same git repository use
+/// identical patch files. This is required because we copy the entire git
+/// repo (not per-package) to preserve workspace inheritance.
+fn check_git_patch_conflicts(
+    gctx: &GlobalContext,
+    root_patch: &HashMap<Url, Vec<crate::core::Patch>>,
+) -> CargoResult<()> {
+    use std::path::PathBuf;
+
+    // Key: (git_url_string, git_precise) -> Vec<(package_name, patch_files)>
+    // We clone patch_files to avoid lifetime issues.
+    type GitPatchMap = HashMap<(String, Option<String>), Vec<(String, Vec<PathBuf>)>>;
+
+    for (_url, patches) in root_patch.iter() {
+        let mut git_patches: GitPatchMap = HashMap::new();
+
+        for patch in patches {
+            let source_id = patch.dep.source_id();
+
+            let SourceKind::Patched(cksum) = source_id.kind() else {
+                continue;
+            };
+
+            let source_id_to_patch = SourceId::from_url(source_id.url().as_str())?;
+            if !source_id_to_patch.is_git() {
+                continue;
+            }
+
+            let precise = source_id_to_patch.precise_git_fragment().map(String::from);
+            let git_url = source_id_to_patch.url().to_string();
+            let key = (git_url, precise);
+            let pkg_name = patch.dep.package_name().to_string();
+            let patch_files = gctx.get_patch_paths(cksum).unwrap_or_default();
+
+            git_patches
+                .entry(key)
+                .or_default()
+                .push((pkg_name, patch_files));
+        }
+
+        for ((git_url, _precise), entries) in &git_patches {
+            if entries.len() <= 1 {
+                continue;
+            }
+
+            let first_patches = &entries[0].1;
+            for (pkg_name, patch_files) in &entries[1..] {
+                if patch_files != first_patches {
+                    let first_pkg = &entries[0].0;
+                    let first_files: Vec<_> = first_patches.iter().map(|p| p.display()).collect();
+                    let other_files: Vec<_> = patch_files.iter().map(|p| p.display()).collect();
+                    anyhow::bail!(
+                        "conflicting patch files for git repository `{}`\n\
+                         `{}` uses patches: {:?}\n\
+                         `{}` uses patches: {:?}\n\
+                         help: all packages from the same git repository must use identical patch files",
+                        git_url,
+                        first_pkg,
+                        first_files,
+                        pkg_name,
+                        other_files,
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Locks each `[replace]` entry to a specific Package ID

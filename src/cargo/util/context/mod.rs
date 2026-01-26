@@ -96,6 +96,7 @@ use annotate_snippets::Level;
 use anyhow::{Context as _, anyhow, bail, format_err};
 use cargo_credential::Secret;
 use cargo_util::paths;
+use cargo_util_schemas::core::PatchChecksum;
 use cargo_util_schemas::manifest::RegistryName;
 use curl::easy::Easy;
 use itertools::Itertools;
@@ -297,6 +298,11 @@ pub struct GlobalContext {
     /// A cache of modifications to make to [`GlobalContext::global_cache_tracker`],
     /// saved to disk in a batch to improve performance.
     deferred_global_last_use: OnceLock<Mutex<DeferredGlobalLastUse>>,
+    /// Patch file paths for patched sources, keyed by checksum.
+    ///
+    /// This is populated during `[patch]` table parsing and looked up
+    /// when a patched source is loaded.
+    patch_paths: Mutex<HashMap<PatchChecksum, Vec<PathBuf>>>,
 }
 
 impl GlobalContext {
@@ -372,6 +378,7 @@ impl GlobalContext {
             ws_roots: Default::default(),
             global_cache_tracker: Default::default(),
             deferred_global_last_use: Default::default(),
+            patch_paths: Default::default(),
         }
     }
 
@@ -444,6 +451,11 @@ impl GlobalContext {
     /// Gets the Cargo registry source directory (`<cargo_home>/registry/src`).
     pub fn registry_source_path(&self) -> Filesystem {
         self.registry_base_path().join("src")
+    }
+
+    /// Gets the directory containing patched package sources (`<cargo_home>/patched-src`).
+    pub fn patched_source_path(&self) -> Filesystem {
+        self.home_path.join("patched-src")
     }
 
     /// Gets the default Cargo registry.
@@ -582,7 +594,19 @@ impl GlobalContext {
         self.credential_cache.lock().unwrap()
     }
 
-    /// Cache of already parsed registries from the `[registries]` table.
+    /// Registers patch file paths for a given checksum.
+    ///
+    /// Called during `[patch]` table parsing to store paths that will be
+    /// looked up later when `PatchedSource` loads.
+    pub fn register_patch_paths(&self, cksum: PatchChecksum, paths: Vec<PathBuf>) {
+        self.patch_paths.lock().unwrap().insert(cksum, paths);
+    }
+
+    /// Gets the patch file paths for a given checksum.
+    pub fn get_patch_paths(&self, cksum: &PatchChecksum) -> Option<Vec<PathBuf>> {
+        self.patch_paths.lock().unwrap().get(cksum).cloned()
+    }
+
     pub(crate) fn registry_config(
         &self,
     ) -> MutexGuard<'_, HashMap<SourceId, Option<RegistryConfig>>> {
