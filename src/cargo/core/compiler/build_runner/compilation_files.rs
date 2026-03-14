@@ -217,11 +217,17 @@ impl<'a, 'gctx: 'a> CompilationFiles<'a, 'gctx> {
         // Docscrape units need to have doc/ set as the out_dir so sources for reverse-dependencies
         // will be put into doc/ and not into deps/ where the *.examples files are stored.
         if unit.mode.is_doc() || unit.mode.is_doc_scrape() {
-            self.layout(unit.kind)
-                .artifact_dir()
-                .expect("artifact-dir was not locked")
-                .doc()
-                .to_path_buf()
+            if unit.mode.is_doc() && self.ws.gctx().cli_unstable().rustdoc_mergeable_info {
+                // With mergeable CCI, isolate per-crate doc HTML in the build
+                // directory. It gets hardlinked into artifact_dir/doc/ at merge time.
+                self.out_dir_new_layout(unit).join("doc")
+            } else {
+                self.layout(unit.kind)
+                    .artifact_dir()
+                    .expect("artifact-dir was not locked")
+                    .doc()
+                    .to_path_buf()
+            }
         } else if unit.mode.is_doc_test() {
             panic!("doc tests do not have an out dir");
         } else if unit.target.is_custom_build() {
