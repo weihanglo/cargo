@@ -419,6 +419,7 @@ pub use self::dep_info::parse_rustc_dep_info;
 pub use self::dep_info::translate_dep_info;
 pub use self::dirty_reason::DirtyReason;
 pub use self::rustdoc::RustdocFingerprint;
+pub(crate) use self::rustdoc::clean_doc;
 
 /// Result of comparing fingerprints between the current and previous builds.
 enum FingerprintComparison {

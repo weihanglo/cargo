@@ -1,14 +1,19 @@
 use crate::core::Workspace;
+use crate::core::compiler::fingerprint::clean_doc;
 use crate::core::compiler::{Compilation, CompileKind};
 use crate::core::shell::Verbosity;
 use crate::ops;
 use crate::util;
 use crate::util::CargoResult;
 
-use anyhow::{Error, bail};
+use anyhow::Context as _;
+use anyhow::Error;
+use anyhow::bail;
 use cargo_util::ProcessBuilder;
+use cargo_util::paths;
 
 use std::ffi::OsString;
+use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -175,7 +180,23 @@ fn merge_cross_crate_info(ws: &Workspace<'_>, compilation: &Compilation<'_>) -> 
             ws.gctx()
                 .shell()
                 .verbose(|shell| shell.status("Running", cmd.to_string()))?;
+
+            // Clean the artifact doc dir before merging. Per-crate HTML is now
+            // isolated in build directories, so the artifact dir needs to be
+            // rebuilt each time:
+            //   1. Clean (remove stale per-crate content and old shared resources)
+            //   2. Finalize (regenerates shared resources: CSS, JS, search index)
+            //   3. Hardlink per-crate HTML from build dirs into artifact dir
+            let artifact_doc = rustdoc_artifact_dir.as_path_unlocked();
+            clean_doc(artifact_doc)?;
             cmd.exec()?;
+            for parts_dir in doc_parts_dirs {
+                // parts_dir is `out/parts/`; doc HTML is at sibling `out/doc/`
+                let per_crate_doc_dir = parts_dir.parent().unwrap().join("doc");
+                if per_crate_doc_dir.exists() {
+                    copy_dir_recursively(&per_crate_doc_dir, artifact_doc)?;
+                }
+            }
 
             Ok(())
         })?;
@@ -187,6 +208,27 @@ fn merge_cross_crate_info(ws: &Workspace<'_>, compilation: &Compilation<'_>) -> 
         format_args!("documentation merge in {time_elapsed}"),
     )?;
 
+    Ok(())
+}
+
+/// Recursively hardlinks (or copies) files from `src` into `dst`.
+///
+/// Directories are created as needed. Existing files at `dst` are overwritten.
+fn copy_dir_recursively(src: &Path, dst: &Path) -> CargoResult<()> {
+    for entry in src
+        .read_dir()
+        .with_context(|| format!("failed to read directory `{}`", src.display()))?
+    {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            paths::create_dir_all(&dst_path)?;
+            copy_dir_recursively(&src_path, &dst_path)?;
+        } else {
+            paths::link_or_copy(&src_path, &dst_path)?;
+        }
+    }
     Ok(())
 }
 

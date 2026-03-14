@@ -273,7 +273,7 @@ fn load_on_disk(path: &Path) -> Option<RustdocFingerprintJson> {
     }
 }
 
-fn clean_doc(path: &Path) -> CargoResult<()> {
+pub(crate) fn clean_doc(path: &Path) -> CargoResult<()> {
     if !path.exists() {
         return Ok(());
     }
