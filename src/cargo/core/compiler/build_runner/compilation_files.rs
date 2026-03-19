@@ -533,6 +533,7 @@ impl<'a, 'gctx: 'a> CompilationFiles<'a, 'gctx> {
                     outputs.push(OutputFile {
                         path: self
                             .out_dir_new_layout(unit)
+                            .join("parts")
                             .join(unit.target.crate_name())
                             .with_extension("json"),
                         hardlink: None,

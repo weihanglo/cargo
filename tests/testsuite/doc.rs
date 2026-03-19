@@ -3249,13 +3249,13 @@ fn mergeable_info_with_deps() {
 [LOCKING] 1 package to latest compatible version
 [DOCUMENTING] dep v0.0.0 ([ROOT]/foo/dep)
 [CHECKING] dep v0.0.0 ([ROOT]/foo/dep)
-[RUNNING] `rustdoc [..]--crate-name dep [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name dep [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out/parts [..]`
 [RUNNING] `rustc --crate-name dep [..]`
 [DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
-[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out[..]`
+[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 2 docs for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out/parts --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
@@ -3265,16 +3265,24 @@ fn mergeable_info_with_deps() {
 
     assert!(p.root().join("target/doc/foo/index.html").is_file());
     assert!(p.root().join("target/doc/dep/index.html").is_file());
-    assert_eq!(p.glob("target/debug/build/foo-*/out/foo.json").count(), 1);
-    assert_eq!(p.glob("target/debug/build/dep-*/out/dep.json").count(), 1);
+    assert_eq!(
+        p.glob("target/debug/build/foo-*/out/parts/foo.json")
+            .count(),
+        1
+    );
+    assert_eq!(
+        p.glob("target/debug/build/dep-*/out/parts/dep.json")
+            .count(),
+        1
+    );
 
     assert_e2e().eq(
         fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/dep-[HASH]/out/dep.json",
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/dep-[HASH]/out/parts/dep.json",
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3310,10 +3318,10 @@ fn mergeable_info_no_deps() {
 [CHECKING] dep v0.0.0 ([ROOT]/foo/dep)
 [RUNNING] `rustc --crate-name dep --edition=2015 [..]`
 [DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
-[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 1 doc for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
@@ -3323,15 +3331,23 @@ fn mergeable_info_no_deps() {
 
     assert!(p.root().join("target/doc/foo/index.html").is_file());
     assert!(!p.root().join("target/doc/dep/index.html").is_file());
-    assert_eq!(p.glob("target/debug/build/foo-*/out/foo.json").count(), 1);
-    assert_eq!(p.glob("target/debug/build/dep-*/out/dep.json").count(), 0);
+    assert_eq!(
+        p.glob("target/debug/build/foo-*/out/parts/foo.json")
+            .count(),
+        1
+    );
+    assert_eq!(
+        p.glob("target/debug/build/dep-*/out/parts/dep.json")
+            .count(),
+        0
+    );
 
     assert_e2e().eq(
         fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3376,14 +3392,14 @@ fn mergeable_info_workspace() {
 [DOCUMENTING] dep v0.0.0 ([ROOT]/foo/dep)
 [CHECKING] dep v0.0.0 ([ROOT]/foo/dep)
 [DOCUMENTING] bar v0.0.0 ([ROOT]/foo/bar)
-[RUNNING] `rustdoc [..]--crate-name dep [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out [..]`
-[RUNNING] `rustdoc [..]--crate-name bar [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/bar-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name dep [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out/parts [..]`
+[RUNNING] `rustdoc [..]--crate-name bar [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/bar-[HASH]/out/parts [..]`
 [RUNNING] `rustc --crate-name dep [..]`
 [DOCUMENTING] foo v0.0.0 ([ROOT]/foo/foo)
-[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 3 docs for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/bar-[HASH]/out --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/bar-[HASH]/out/parts --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out/parts --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/bar/index.html
 [GENERATED] [ROOT]/foo/target/doc/dep/index.html
@@ -3396,18 +3412,30 @@ fn mergeable_info_workspace() {
     assert!(p.root().join("target/doc/foo/index.html").is_file());
     assert!(p.root().join("target/doc/bar/index.html").is_file());
     assert!(p.root().join("target/doc/dep/index.html").is_file());
-    assert_eq!(p.glob("target/debug/build/foo-*/out/foo.json").count(), 1);
-    assert_eq!(p.glob("target/debug/build/bar-*/out/bar.json").count(), 1);
-    assert_eq!(p.glob("target/debug/build/dep-*/out/dep.json").count(), 1);
+    assert_eq!(
+        p.glob("target/debug/build/foo-*/out/parts/foo.json")
+            .count(),
+        1
+    );
+    assert_eq!(
+        p.glob("target/debug/build/bar-*/out/parts/bar.json")
+            .count(),
+        1
+    );
+    assert_eq!(
+        p.glob("target/debug/build/dep-*/out/parts/dep.json")
+            .count(),
+        1
+    );
 
     assert_e2e().eq(
         fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/bar-[HASH]/out/bar.json",
-    "debug/build/dep-[HASH]/out/dep.json",
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/bar-[HASH]/out/parts/bar.json",
+    "debug/build/dep-[HASH]/out/parts/dep.json",
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3443,13 +3471,13 @@ fn mergeable_info_multi_targets() {
         .with_stderr_data(
             str![[r#"
 [DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
-[RUNNING] `rustdoc [..]--crate-name foo src/lib.rs --target [HOST_TARGET] [..]--merge=none --parts-out-dir=[ROOT]/foo/target/[HOST_TARGET]/debug/build/foo-[HASH]/out [..]`
-[RUNNING] `rustdoc [..]--crate-name foo src/lib.rs --target [ALT_TARGET] [..]--merge=none --parts-out-dir=[ROOT]/foo/target/[ALT_TARGET]/debug/build/foo-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name foo src/lib.rs --target [HOST_TARGET] [..]--merge=none --parts-out-dir=[ROOT]/foo/target/[HOST_TARGET]/debug/build/foo-[HASH]/out/parts [..]`
+[RUNNING] `rustdoc [..]--crate-name foo src/lib.rs --target [ALT_TARGET] [..]--merge=none --parts-out-dir=[ROOT]/foo/target/[ALT_TARGET]/debug/build/foo-[HASH]/out/parts [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 1 doc for [ALT_TARGET]
-[RUNNING] `rustdoc -o [ROOT]/foo/target/[ALT_TARGET]/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/[ALT_TARGET]/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/[ALT_TARGET]/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/[ALT_TARGET]/debug/build/foo-[HASH]/out/parts`
 [MERGING] 1 doc for [HOST_TARGET]
-[RUNNING] `rustdoc -o [ROOT]/foo/target/[HOST_TARGET]/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/[HOST_TARGET]/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/[HOST_TARGET]/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/[HOST_TARGET]/debug/build/foo-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/[HOST_TARGET]/doc/foo/index.html
 [GENERATED] [ROOT]/foo/target/[ALT_TARGET]/doc/foo/index.html
@@ -3464,9 +3492,9 @@ fn mergeable_info_multi_targets() {
     assert!(p.root().join(path).is_file());
     let path = format!("target/{target}/doc/foo/index.html");
     assert!(p.root().join(path).is_file());
-    let path = format!("target/{host}/debug/build/foo-*/out/foo.json");
+    let path = format!("target/{host}/debug/build/foo-*/out/parts/foo.json");
     assert_eq!(p.glob(path).count(), 1);
-    let path = format!("target/{target}/debug/build/foo-*/out/foo.json");
+    let path = format!("target/{target}/debug/build/foo-*/out/parts/foo.json");
     assert_eq!(p.glob(path).count(), 1);
 
     assert_e2e().eq(
@@ -3474,7 +3502,7 @@ fn mergeable_info_multi_targets() {
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3487,7 +3515,7 @@ fn mergeable_info_multi_targets() {
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3515,10 +3543,10 @@ fn mergeable_info_rebuild_detection() {
         .with_stderr_data(
             str![[r#"
 [DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
-[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 1 doc for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
@@ -3527,14 +3555,18 @@ fn mergeable_info_rebuild_detection() {
         .run();
 
     assert!(p.root().join("target/doc/foo/index.html").is_file());
-    assert_eq!(p.glob("target/debug/build/foo-*/out/foo.json").count(), 1);
+    assert_eq!(
+        p.glob("target/debug/build/foo-*/out/parts/foo.json")
+            .count(),
+        1
+    );
 
     assert_e2e().eq(
         fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3561,7 +3593,7 @@ fn mergeable_info_rebuild_detection() {
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3579,10 +3611,10 @@ fn mergeable_info_rebuild_detection() {
             str![[r#"
 [DIRTY] foo v0.0.0 ([ROOT]/foo): the precalculated components changed
 [DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
-[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 1 doc for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
@@ -3622,7 +3654,7 @@ fn mergeable_info_rebuild_detection() {
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3653,10 +3685,10 @@ fn mergeable_info_rebuild_with_depinfo() {
         .with_stderr_data(
             str![[r#"
 [DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
-[RUNNING] `rustdoc [..]--crate-name foo [..]--emit=html-non-static-files,dep-info=[..] --merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name foo [..]--emit=html-non-static-files,dep-info=[..] --merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 1 doc for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
@@ -3665,14 +3697,18 @@ fn mergeable_info_rebuild_with_depinfo() {
         .run();
 
     assert!(p.root().join("target/doc/foo/index.html").is_file());
-    assert_eq!(p.glob("target/debug/build/foo-*/out/foo.json").count(), 1);
+    assert_eq!(
+        p.glob("target/debug/build/foo-*/out/parts/foo.json")
+            .count(),
+        1
+    );
 
     assert_e2e().eq(
         fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3699,7 +3735,7 @@ fn mergeable_info_rebuild_with_depinfo() {
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3717,10 +3753,10 @@ fn mergeable_info_rebuild_with_depinfo() {
             str![[r#"
 [DIRTY] foo v0.0.0 ([ROOT]/foo): the file `src/lib.rs` has changed ([TIME_DIFF_AFTER_LAST_BUILD])
 [DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
-[RUNNING] `rustdoc [..]--crate-name foo [..]--emit=html-non-static-files,dep-info=[..] --merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name foo [..]--emit=html-non-static-files,dep-info=[..] --merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 1 doc for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
@@ -3760,7 +3796,7 @@ fn mergeable_info_rebuild_with_depinfo() {
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3805,10 +3841,10 @@ fn mergeable_info_additive() {
 [CHECKING] dep v0.0.0 ([ROOT]/foo/dep)
 [RUNNING] `rustc --crate-name dep [..]`
 [DOCUMENTING] foo v0.0.0 ([ROOT]/foo/foo)
-[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name foo [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 1 doc for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
@@ -3819,16 +3855,28 @@ fn mergeable_info_additive() {
     assert!(p.root().join("target/doc/foo/index.html").is_file());
     assert!(!p.root().join("target/doc/bar/index.html").is_file());
     assert!(!p.root().join("target/doc/dep/index.html").is_file());
-    assert_eq!(p.glob("target/debug/build/foo-*/out/foo.json").count(), 1);
-    assert_eq!(p.glob("target/debug/build/bar-*/out/bar.json").count(), 0);
-    assert_eq!(p.glob("target/debug/build/dep-*/out/dep.json").count(), 0);
+    assert_eq!(
+        p.glob("target/debug/build/foo-*/out/parts/foo.json")
+            .count(),
+        1
+    );
+    assert_eq!(
+        p.glob("target/debug/build/bar-*/out/parts/bar.json")
+            .count(),
+        0
+    );
+    assert_eq!(
+        p.glob("target/debug/build/dep-*/out/parts/dep.json")
+            .count(),
+        0
+    );
 
     assert_e2e().eq(
         fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3841,10 +3889,10 @@ fn mergeable_info_additive() {
         .with_stderr_data(
             str![[r#"
 [DOCUMENTING] dep v0.0.0 ([ROOT]/foo/dep)
-[RUNNING] `rustdoc [..]--crate-name dep [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name dep [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out/parts [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 2 docs for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out/parts --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/dep/index.html
 
@@ -3855,17 +3903,29 @@ fn mergeable_info_additive() {
     assert!(p.root().join("target/doc/foo/index.html").is_file());
     assert!(!p.root().join("target/doc/bar/index.html").is_file());
     assert!(p.root().join("target/doc/dep/index.html").is_file());
-    assert_eq!(p.glob("target/debug/build/foo-*/out/foo.json").count(), 1);
-    assert_eq!(p.glob("target/debug/build/bar-*/out/bar.json").count(), 0);
-    assert_eq!(p.glob("target/debug/build/dep-*/out/dep.json").count(), 1);
+    assert_eq!(
+        p.glob("target/debug/build/foo-*/out/parts/foo.json")
+            .count(),
+        1
+    );
+    assert_eq!(
+        p.glob("target/debug/build/bar-*/out/parts/bar.json")
+            .count(),
+        0
+    );
+    assert_eq!(
+        p.glob("target/debug/build/dep-*/out/parts/dep.json")
+            .count(),
+        1
+    );
 
     assert_e2e().eq(
         fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/dep-[HASH]/out/dep.json",
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/dep-[HASH]/out/parts/dep.json",
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3878,10 +3938,10 @@ fn mergeable_info_additive() {
         .with_stderr_data(
             str![[r#"
 [DOCUMENTING] bar v0.0.0 ([ROOT]/foo/bar)
-[RUNNING] `rustdoc [..]--crate-name bar [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/bar-[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name bar [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/bar-[HASH]/out/parts [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 3 docs for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/bar-[HASH]/out --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/bar-[HASH]/out/parts --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out/parts --include-parts-dir=[ROOT]/foo/target/debug/build/foo-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/bar/index.html
 
@@ -3892,18 +3952,30 @@ fn mergeable_info_additive() {
     assert!(p.root().join("target/doc/foo/index.html").is_file());
     assert!(p.root().join("target/doc/bar/index.html").is_file());
     assert!(p.root().join("target/doc/dep/index.html").is_file());
-    assert_eq!(p.glob("target/debug/build/foo-*/out/foo.json").count(), 1);
-    assert_eq!(p.glob("target/debug/build/bar-*/out/bar.json").count(), 1);
-    assert_eq!(p.glob("target/debug/build/dep-*/out/dep.json").count(), 1);
+    assert_eq!(
+        p.glob("target/debug/build/foo-*/out/parts/foo.json")
+            .count(),
+        1
+    );
+    assert_eq!(
+        p.glob("target/debug/build/bar-*/out/parts/bar.json")
+            .count(),
+        1
+    );
+    assert_eq!(
+        p.glob("target/debug/build/dep-*/out/parts/dep.json")
+            .count(),
+        1
+    );
 
     assert_e2e().eq(
         fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/bar-[HASH]/out/bar.json",
-    "debug/build/dep-[HASH]/out/dep.json",
-    "debug/build/foo-[HASH]/out/foo.json"
+    "debug/build/bar-[HASH]/out/parts/bar.json",
+    "debug/build/dep-[HASH]/out/parts/dep.json",
+    "debug/build/foo-[HASH]/out/parts/foo.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3954,10 +4026,10 @@ fn mergeable_info_dep_collision() {
 [DOWNLOADED] dep v0.2.0 (registry `dummy-registry`)
 [DOWNLOADED] dep v0.1.0 (registry `dummy-registry`)
 [DOCUMENTING] dep v0.1.0
-[RUNNING] `rustdoc [..]--crate-name dep [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out [..]--crate-version 0.1.0`
+[RUNNING] `rustdoc [..]--crate-name dep [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out/parts [..]--crate-version 0.1.0`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 1 doc for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/dep/index.html
 
@@ -3966,7 +4038,11 @@ fn mergeable_info_dep_collision() {
         .run();
 
     assert!(p.root().join("target/doc/dep/index.html").is_file());
-    assert_eq!(p.glob("target/debug/build/dep-*/out/dep.json").count(), 1);
+    assert_eq!(
+        p.glob("target/debug/build/dep-*/out/parts/dep.json")
+            .count(),
+        1
+    );
 
     // See `fn dep010()`
     assert!(p.build_dir().join("doc/dep/fn.dep010.html").exists());
@@ -3979,7 +4055,7 @@ fn mergeable_info_dep_collision() {
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/dep-[HASH]/out/dep.json"
+    "debug/build/dep-[HASH]/out/parts/dep.json"
   ],
   "rustc_vv": "{...}"
 }
@@ -3993,10 +4069,10 @@ fn mergeable_info_dep_collision() {
         .with_stderr_data(
             str![[r#"
 [DOCUMENTING] dep v0.2.0
-[RUNNING] `rustdoc [..]--crate-name dep [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out [..]--crate-version 0.2.0`
+[RUNNING] `rustdoc [..]--crate-name dep [..]--merge=none --parts-out-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out/parts [..]--crate-version 0.2.0`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [MERGING] 1 doc for host
-[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out`
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --merge=finalize --include-parts-dir=[ROOT]/foo/target/debug/build/dep-[HASH]/out/parts`
 [FINISHED] documentation merge in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/dep/index.html
 
@@ -4006,7 +4082,11 @@ fn mergeable_info_dep_collision() {
 
     assert!(p.root().join("target/doc/dep/index.html").is_file());
     // We'll have two dep.json
-    assert_eq!(p.glob("target/debug/build/dep-*/out/dep.json").count(), 2);
+    assert_eq!(
+        p.glob("target/debug/build/dep-*/out/parts/dep.json")
+            .count(),
+        2
+    );
 
     // ...but only the selected dep@0.2.0 would be merged
     assert!(!p.build_dir().join("doc/dep/fn.dep010.html").exists());
@@ -4019,7 +4099,7 @@ fn mergeable_info_dep_collision() {
         str![[r#"
 {
   "doc_parts": [
-    "debug/build/dep-[HASH]/out/dep.json"
+    "debug/build/dep-[HASH]/out/parts/dep.json"
   ],
   "rustc_vv": "{...}"
 }
