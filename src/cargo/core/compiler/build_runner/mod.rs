@@ -419,11 +419,18 @@ impl<'a, 'gctx> BuildRunner<'a, 'gctx> {
                 // we will output the report files.
                 self.bcx.build_config.timing_report
             }
-            UserIntent::Build
-            | UserIntent::Test
-            | UserIntent::Doc { .. }
-            | UserIntent::Doctest
-            | UserIntent::Bench => true,
+            UserIntent::Doc { .. } => {
+                let unstable = self.bcx.gctx.cli_unstable();
+                // With mergeable CCI, per-crate rustdoc writes to build-dir only.
+                // The artifact-dir lock is deferred to merge_cross_crate_info().
+                // Exception: docscrape still writes directly to artifact-dir/doc/.
+                if unstable.rustdoc_mergeable_info && !unstable.rustdoc_scrape_examples {
+                    false
+                } else {
+                    true
+                }
+            }
+            UserIntent::Build | UserIntent::Test | UserIntent::Doctest | UserIntent::Bench => true,
         };
         let host_layout =
             Layout::new(self.bcx.ws, None, &dest, must_take_artifact_dir_lock, false)?;
@@ -476,6 +483,18 @@ impl<'a, 'gctx> BuildRunner<'a, 'gctx> {
                 self.compilation
                     .root_output
                     .insert(kind, artifact_dir.dest().to_path_buf());
+            } else {
+                // When artifact-dir lock is not held (e.g., doc with mergeable
+                // CCI), still populate root_output for search paths and the
+                // `[GENERATED]` message.
+                let dest = self.bcx.profiles.get_dir_name();
+                let mut root = self.bcx.ws.target_dir();
+                if let CompileKind::Target(t) = kind {
+                    root.push(t.short_name());
+                }
+                self.compilation
+                    .root_output
+                    .insert(kind, root.join(&dest).into_path_unlocked());
             }
             if self.bcx.gctx.cli_unstable().build_dir_new_layout {
                 for (unit, _) in self.bcx.unit_graph.iter() {

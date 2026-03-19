@@ -239,14 +239,13 @@ fn check_fingerprint(
         "fingerprint {:?} mismatch, clearing doc directories",
         fingerprint_path
     );
-    let doc_dir = build_runner
-        .files()
-        .layout(kind)
-        .artifact_dir()
-        .expect("artifact-dir was not locked")
-        .doc();
-    if doc_dir.exists() {
-        clean_doc(doc_dir)?;
+    // With mergeable CCI the artifact-dir lock may not be held during
+    // compilation. The merge step's clean_doc_dir handles stale content.
+    if let Some(artifact_dir) = build_runner.files().layout(kind).artifact_dir() {
+        let doc_dir = artifact_dir.doc();
+        if doc_dir.exists() {
+            clean_doc(doc_dir)?;
+        }
     }
 
     write_fingerprint()?;

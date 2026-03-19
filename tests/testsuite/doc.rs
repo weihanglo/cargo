@@ -4129,7 +4129,9 @@ fn mergeable_info_defers_artifact_dir_lock() {
         .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
         .run();
 
-    assert!(p.root().join("target-dir/debug/.cargo-lock").exists());
+    // With mergeable CCI, the artifact-dir lock is deferred to the merge step
+    // and not held during the compilation phase.
+    assert!(!p.root().join("target-dir/debug/.cargo-lock").exists());
     assert!(p.root().join("build-dir/debug/.cargo-build-lock").exists());
     assert!(p.root().join("target-dir/doc/foo/index.html").is_file());
 }
