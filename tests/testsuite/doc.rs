@@ -4109,3 +4109,27 @@ fn mergeable_info_dep_collision() {
     // ...and the fingerprint content are different (path to dep.json different)
     assert_ne!(first_fingerprint, second_fingerprint);
 }
+
+#[cargo_test(nightly, reason = "rustdoc mergeable crate info is unstable")]
+fn mergeable_info_defers_artifact_dir_lock() {
+    let p = project()
+        .file(
+            ".cargo/config.toml",
+            r#"
+            [build]
+            target-dir = "target-dir"
+            build-dir = "build-dir"
+            "#,
+        )
+        .file("Cargo.toml", &basic_lib_manifest("foo"))
+        .file("src/lib.rs", "pub fn foo() {}")
+        .build();
+
+    p.cargo("doc -Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .run();
+
+    assert!(p.root().join("target-dir/debug/.cargo-lock").exists());
+    assert!(p.root().join("build-dir/debug/.cargo-build-lock").exists());
+    assert!(p.root().join("target-dir/doc/foo/index.html").is_file());
+}
