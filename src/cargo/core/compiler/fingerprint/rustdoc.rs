@@ -274,6 +274,9 @@ fn load_on_disk(path: &Path) -> Option<RustdocFingerprintJson> {
 }
 
 fn clean_doc(path: &Path) -> CargoResult<()> {
+    if !path.exists() {
+        return Ok(());
+    }
     let entries = path
         .read_dir()
         .with_context(|| format!("failed to read directory `{}`", path.display()))?;
