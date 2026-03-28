@@ -294,3 +294,6 @@ http-transport-reqwest = ["gix/blocking-http-transport-reqwest"]
 
 [lints]
 workspace = true
+
+[patch.crates-io]
+curl-sys = { git = "https://github.com/weihanglo/curl-rust.git", branch = "fix" }
