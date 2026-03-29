@@ -227,7 +227,7 @@ jobs:
     - name: Configure bootstrap-like Windows probe
       shell: pwsh
       run: |
-        Add-Content $env:GITHUB_ENV 'RUSTFLAGS=--cfg=windows_raw_dylib -Zunstable-options'
+        #Add-Content $env:GITHUB_ENV 'RUSTFLAGS=--cfg=windows_raw_dylib -Zunstable-options'
         Add-Content $env:GITHUB_ENV 'CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1'
       if: matrix.bootstrap_like
     - run: cargo build -p cargo -F all-static --release
