@@ -540,7 +540,7 @@ impl<'gctx> Workspace<'gctx> {
                     })?,
             };
             patch.insert(
-                url,
+                url.clone(),
                 deps.iter()
                     .map(|(name, dependency_cv)| {
                         crate::util::toml::config_patch_to_dependency(
@@ -549,6 +549,7 @@ impl<'gctx> Workspace<'gctx> {
                             source,
                             self.gctx,
                             &mut warnings,
+                            &url,
                         )
                         .map(|dep| Patch {
                             dep,
