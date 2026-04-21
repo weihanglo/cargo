@@ -424,6 +424,7 @@ impl SourceId {
                     .expect("path sources cannot be remote");
                 Ok(Box::new(DirectorySource::new(&path, self, gctx)))
             }
+            SourceKind::Patched(_) => unimplemented!("PatchedSource not yet available"),
         }
     }
 
@@ -670,6 +671,7 @@ impl fmt::Display for SourceId {
             }
             SourceKind::LocalRegistry => write!(f, "registry `{}`", url_display(&self.inner.url)),
             SourceKind::Directory => write!(f, "dir {}", url_display(&self.inner.url)),
+            SourceKind::Patched(_) => write!(f, "patched {}", url_display(&self.inner.url)),
         }
     }
 }
