@@ -280,6 +280,12 @@ impl<'src> SourceMap<'src> {
         self.map.insert(id, source.into());
     }
 
+    /// Like [`SourceMap::insert`], but accepts a shared source handle.
+    pub(crate) fn insert_shared(&mut self, source: Rc<dyn Source + 'src>) {
+        let id = source.source_id();
+        self.map.insert(id, source);
+    }
+
     /// Like `HashMap::len`.
     pub fn len(&self) -> usize {
         self.map.len()
