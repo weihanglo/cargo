@@ -458,9 +458,6 @@ Caused by:
   unable to update git://host.xz
 
 Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/_empty-[HASH]
-
-Caused by:
   URL "git://host.xz" does not specify a path to a repository
 
 "#]])
@@ -477,9 +474,6 @@ Caused by:
 
 Caused by:
   unable to update file:///
-
-Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/_empty-[HASH]
 
 Caused by:
   'file:///' is not a valid local file URI; class=Config (7)
@@ -2384,9 +2378,6 @@ Caused by:
 
 Caused by:
   unable to update http://127.0.0.1/#foo
-
-Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/_empty-[HASH]
 ...
 
 "#]])

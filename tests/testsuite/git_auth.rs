@@ -150,9 +150,6 @@ Caused by:
   unable to update http://{addr}/foo/bar
 
 Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/bar-[HASH]
-
-Caused by:
   failed to authenticate when downloading repository
 
   * attempted to find username/password via `credential.helper`, but maybe the found credentials were incorrect
@@ -227,9 +224,6 @@ Caused by:
 
 Caused by:
   unable to update https://{addr}/foo/bar
-
-Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/bar-[HASH]
 
 Caused by:
 {errmsg}
@@ -327,9 +321,6 @@ Caused by:
   unable to update ssh://{addr}/foo/bar
 
 Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/bar-[HASH]
-
-Caused by:
   network failure seems to have happened
   if a proxy or similar is necessary `net.git-fetch-with-cli` may help here
   https://doc.rust-lang.org/cargo/reference/config.html#netgit-fetch-with-cli
@@ -380,9 +371,6 @@ Caused by:
 
 Caused by:
   unable to update ssh://needs-proxy.invalid/git
-
-Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/git-[HASH]
 
 Caused by:
   network failure seems to have happened
@@ -458,9 +446,6 @@ Caused by:
 
 Caused by:
   unable to update https://foo.bar/foo/bar
-
-Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/bar-[HASH]
 
 Caused by:
   failed to authenticate when downloading repository: http://{addr}/foo/bar

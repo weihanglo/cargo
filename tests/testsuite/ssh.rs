@@ -142,9 +142,6 @@ Caused by:
   unable to update ssh://testuser@127.0.0.1:[..]/repos/bar.git
 
 Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/bar-[HASH]
-
-Caused by:
   [ERROR] unknown SSH host key
   The SSH host key for `[127.0.0.1]:[..]` is not known and cannot be validated.
 
@@ -232,9 +229,6 @@ Caused by:
 
 Caused by:
   unable to update ssh://testuser@127.0.0.1:[..]/repos/bar.git
-
-Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/bar-[HASH]
 
 Caused by:
   [ERROR] unknown SSH host key
@@ -345,9 +339,6 @@ Caused by:
 
 Caused by:
   unable to update ssh://testuser@127.0.0.1:{port}/repos/bar.git
-
-Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/bar-[HASH]
 
 Caused by:
   [ERROR] SSH host key has changed for `[127.0.0.1]:{port}`
@@ -477,9 +468,6 @@ Caused by:
   unable to update ssh://git@github.com/rust-lang/bitflags.git?tag=1.3.2
 
 Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/bitflags-[HASH]
-
-Caused by:
   failed to authenticate when downloading repository
 
   * attempted to find username/password via `credential.helper`, but maybe the found credentials were incorrect
@@ -504,9 +492,6 @@ Caused by:
 
 Caused by:
   unable to update ssh://git@github.com/rust-lang/bitflags.git?tag=1.3.2
-
-Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/bitflags-[HASH]
 
 Caused by:
   failed to authenticate when downloading repository
@@ -566,9 +551,6 @@ Caused by:
 
 Caused by:
   unable to update ssh://git@github.com:22/rust-lang/bitflags.git?tag=1.3.2
-
-Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/bitflags-[HASH]
 
 Caused by:
   failed to authenticate when downloading repository
