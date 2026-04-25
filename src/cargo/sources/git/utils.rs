@@ -1164,6 +1164,9 @@ pub fn fetch(
         ensure_sha256_allowed(format, gctx)?;
         fetch_with_cli(repo, remote_url, &refspecs, tags, shallow, gctx)
     } else if gctx.cli_unstable().gitoxide.map_or(false, |git| git.fetch) {
+        if matches!(format, git2::ObjectFormat::Sha256) {
+            anyhow::bail!("gitoxide does not yet support SHA256 repositories");
+        }
         fetch_with_gitoxide(repo, remote_url, refspecs, tags, shallow, gctx)
     } else {
         ensure_sha256_allowed(format, gctx)?;

@@ -33,14 +33,24 @@ fn sha256_gated_libgit2() {
         .file("src/lib.rs", "")
         .build();
 
-    // Without `-Zgit=sha256`, the SHA256 repo is treated as SHA1.
-    // The fetch fails because the object formats are incompatible.
     p.cargo("check")
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/dep1`
 [ERROR] failed to get `dep1` as a dependency of package `foo v0.0.0 ([ROOT]/foo)`
-...
+
+Caused by:
+  failed to load source for dependency `dep1`
+
+Caused by:
+  unable to update [ROOTURL]/dep1
+
+Caused by:
+  failed to clone into: [ROOT]/home/.cargo/git/db/dep1-[HASH]-sha256
+
+Caused by:
+  SHA256 git repositories require `-Zgit=sha256` to be enabled
+
 "#]])
         .run();
 }
@@ -159,7 +169,7 @@ Caused by:
 }
 
 #[cargo_test]
-fn sha256_gitoxide_fallback_to_libgit2() {
+fn sha256_gated_gitoxide_with_sha256_flag() {
     let (git_dep, _repo) = git::new_sha256_repo("dep1", |p| {
         p.file("Cargo.toml", &basic_manifest("dep1", "1.0.0"))
             .file("src/lib.rs", "")
@@ -183,23 +193,31 @@ fn sha256_gitoxide_fallback_to_libgit2() {
         .file("src/lib.rs", "")
         .build();
 
-    // gitoxide doesn't support SHA256 yet, so Cargo silently falls back
-    // to libgit2 for the fetch and the operation succeeds.
     p.cargo("check -Zgit=sha256 -Zgitoxide=fetch")
         .masquerade_as_nightly_cargo(&["git=sha256", "gitoxide=fetch"])
+        .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/dep1`
-[LOCKING] 1 package to latest compatible version
-[CHECKING] dep1 v1.0.0 ([ROOTURL]/dep1#[..])
-[CHECKING] foo v0.0.0 ([ROOT]/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[ERROR] failed to get `dep1` as a dependency of package `foo v0.0.0 ([ROOT]/foo)`
+
+Caused by:
+  failed to load source for dependency `dep1`
+
+Caused by:
+  unable to update [ROOTURL]/dep1
+
+Caused by:
+  failed to clone into: [ROOT]/home/.cargo/git/db/dep1-[..]-sha256
+
+Caused by:
+  gitoxide does not yet support SHA256 repositories
 
 "#]])
         .run();
 }
 
 #[cargo_test]
-fn sha256_gitoxide_fallback_without_sha256_flag() {
+fn sha256_gated_gitoxide_without_sha256_flag() {
     let (git_dep, _repo) = git::new_sha256_repo("dep1", |p| {
         p.file("Cargo.toml", &basic_manifest("dep1", "1.0.0"))
             .file("src/lib.rs", "")
@@ -223,15 +241,27 @@ fn sha256_gitoxide_fallback_without_sha256_flag() {
         .file("src/lib.rs", "")
         .build();
 
-    // Without `-Zgit=sha256`, the SHA256 repo is treated as SHA1.
-    // The fetch fails because the object formats are incompatible.
+    // gitoxide doesn't support SHA256 yet — Cargo bails early
+    // with a clear message before attempting the fetch.
     p.cargo("check -Zgitoxide=fetch")
         .masquerade_as_nightly_cargo(&["gitoxide=fetch"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/dep1`
 [ERROR] failed to get `dep1` as a dependency of package `foo v0.0.0 ([ROOT]/foo)`
-...
+
+Caused by:
+  failed to load source for dependency `dep1`
+
+Caused by:
+  unable to update [ROOTURL]/dep1
+
+Caused by:
+  failed to clone into: [ROOT]/home/.cargo/git/db/dep1-[HASH]-sha256
+
+Caused by:
+  gitoxide does not yet support SHA256 repositories
+
 "#]])
         .run();
 }
