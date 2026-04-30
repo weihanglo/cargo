@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use cargo_util_schemas::manifest::ProfilePackageSpec;
-use cargo_util_schemas::manifest::TomlToolLints;
 use cargo_util_terminal::report::AnnotationKind;
 use cargo_util_terminal::report::Group;
 use cargo_util_terminal::report::Level;
@@ -17,7 +16,7 @@ use crate::core::MaybePackage;
 use crate::core::Workspace;
 use crate::diagnostics::DiagnosticStats;
 use crate::diagnostics::Lint;
-use crate::diagnostics::LintLevel;
+use crate::diagnostics::LintLevelProduct;
 use crate::diagnostics::get_key_value_span;
 use crate::diagnostics::rel_cwd_manifest_path;
 
@@ -57,23 +56,18 @@ hint-mostly-unused = true
 };
 
 #[instrument(skip_all)]
-pub fn blanket_hint_mostly_unused(
-    ws: &Workspace<'_>,
+pub(crate) fn lint_workspace(
+    _ws: &Workspace<'_>,
     maybe_pkg: &MaybePackage,
     path: &Path,
-    pkg_lints: &TomlToolLints,
-    stats: &mut DiagnosticStats,
+    level: LintLevelProduct,
+    pkg_stats: &mut DiagnosticStats,
     gctx: &GlobalContext,
 ) -> CargoResult<()> {
-    let (lint_level, source) = LINT.level(
-        pkg_lints,
-        ws.lowest_rust_version(),
-        maybe_pkg.unstable_features(),
-    );
-
-    if lint_level == LintLevel::Allow {
-        return Ok(());
-    }
+    let LintLevelProduct {
+        level: lint_level,
+        source,
+    } = level;
 
     let level = lint_level.to_diagnostic_level();
     let manifest_path = rel_cwd_manifest_path(path, gctx);
@@ -175,7 +169,7 @@ pub fn blanket_hint_mostly_unused(
         // The primary group should always be first
         report.insert(0, primary_group);
 
-        stats.record_lint(lint_level);
+        pkg_stats.record_lint(lint_level);
         gctx.shell().print_report(&report, lint_level.force())?;
     }
 

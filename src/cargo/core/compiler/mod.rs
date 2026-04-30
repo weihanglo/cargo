@@ -51,7 +51,7 @@ pub mod timings;
 mod unit;
 pub mod unit_dependencies;
 pub mod unit_graph;
-mod unused_deps;
+pub mod unused_deps;
 
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -103,7 +103,7 @@ pub use crate::core::compiler::unit::Unit;
 pub use crate::core::compiler::unit::UnitIndex;
 pub use crate::core::compiler::unit::UnitInterner;
 use crate::core::manifest::TargetSourcePath;
-use crate::core::profiles::{FramePointers, PanicStrategy, Profile, StripInner};
+use crate::core::profiles::{PanicStrategy, Profile, StripInner};
 use crate::core::{Feature, PackageId, Target};
 use crate::diagnostics::get_key_value;
 use crate::util::OnceExt;
@@ -815,6 +815,9 @@ fn prepare_rustc(build_runner: &BuildRunner<'_, '_>, unit: &Unit) -> CargoResult
     if build_runner.bcx.gctx.cli_unstable().checksum_freshness {
         base.arg("-Z").arg("checksum-hash-algorithm=blake3");
     }
+    if gctx.shell().verbosity() == Verbosity::Verbose && unit.is_local() {
+        base.arg("--verbose");
+    }
 
     if is_primary {
         base.env("CARGO_PRIMARY_PACKAGE", "1");
@@ -903,16 +906,14 @@ fn prepare_rustdoc(build_runner: &BuildRunner<'_, '_>, unit: &Unit) -> CargoResu
         if build_runner.bcx.gctx.cli_unstable().checksum_freshness {
             rustdoc.arg("-Z").arg("checksum-hash-algorithm=blake3");
         }
-
-        rustdoc.arg("-Zunstable-options");
     } else if build_runner.bcx.gctx.cli_unstable().rustdoc_mergeable_info {
         // toolchain resources are written at the end, at the same time as merging
         rustdoc.arg("--emit=html-non-static-files");
-        rustdoc.arg("-Zunstable-options");
     }
 
     if build_runner.bcx.gctx.cli_unstable().rustdoc_mergeable_info {
         // write out mergeable data to be imported
+        rustdoc.arg("-Zunstable-options");
         rustdoc.arg("--merge=none");
         let mut arg = OsString::from("--parts-out-dir=");
         // `-Zrustdoc-mergeable-info` always uses the new layout.
@@ -1244,7 +1245,6 @@ fn build_base_args(
         rustflags: profile_rustflags,
         trim_paths,
         hint_mostly_unused: profile_hint_mostly_unused,
-        frame_pointers,
         ..
     } = unit.profile.clone();
     let hints = unit.pkg.hints().cloned().unwrap_or_default();
@@ -1465,14 +1465,6 @@ fn build_base_args(
     let strip = strip.into_inner();
     if strip != StripInner::None {
         cmd.arg("-C").arg(format!("strip={}", strip));
-    }
-
-    if let Some(frame_pointers) = frame_pointers {
-        let val = match frame_pointers {
-            FramePointers::ForceOn => "on",
-            FramePointers::ForceOff => "off",
-        };
-        cmd.arg("-C").arg(format!("force-frame-pointers={}", val));
     }
 
     if unit.is_std {

@@ -198,7 +198,7 @@ use flate2::read::GzDecoder;
 use futures::FutureExt as _;
 use serde::Deserialize;
 use serde::Serialize;
-use tar::Archive;
+use tar::{Archive, EntryType};
 use tracing::debug;
 
 use crate::core::dependency::Dependency;
@@ -212,6 +212,8 @@ use crate::util::cache_lock::CacheLockMode;
 use crate::util::interning::InternedString;
 use crate::util::{CargoResult, Filesystem, GlobalContext, LimitErrorReader, restricted_names};
 use crate::util::{VersionExt, hex};
+
+pub use cargo_util_schemas::index::RegistryConfig;
 
 /// The `.cargo-ok` file is used to track if the source is already unpacked.
 /// See [`RegistrySource::unpack_package`] for more.
@@ -268,55 +270,6 @@ pub struct RegistrySource<'gctx> {
     /// warning twice, with the assumption of (`dep.package_name()` + `--precise`
     /// version) being sufficient to uniquely identify the same query result.
     selected_precise_yanked: RefCell<HashSet<(InternedString, semver::Version)>>,
-}
-
-/// The [`config.json`] file stored in the index.
-///
-/// The config file may look like:
-///
-/// ```json
-/// {
-///     "dl": "https://example.com/api/{crate}/{version}/download",
-///     "api": "https://example.com/api",
-///     "auth-required": false             # unstable feature (RFC 3139)
-/// }
-/// ```
-///
-/// [`config.json`]: https://doc.rust-lang.org/nightly/cargo/reference/registry-index.html#index-configuration
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "kebab-case")]
-pub struct RegistryConfig {
-    /// Download endpoint for all crates.
-    ///
-    /// The string is a template which will generate the download URL for the
-    /// tarball of a specific version of a crate. The substrings `{crate}` and
-    /// `{version}` will be replaced with the crate's name and version
-    /// respectively.  The substring `{prefix}` will be replaced with the
-    /// crate's prefix directory name, and the substring `{lowerprefix}` will
-    /// be replaced with the crate's prefix directory name converted to
-    /// lowercase. The substring `{sha256-checksum}` will be replaced with the
-    /// crate's sha256 checksum.
-    ///
-    /// For backwards compatibility, if the string does not contain any
-    /// markers (`{crate}`, `{version}`, `{prefix}`, or `{lowerprefix}`), it
-    /// will be extended with `/{crate}/{version}/download` to
-    /// support registries like crates.io which were created before the
-    /// templating setup was created.
-    ///
-    /// For more on the template of the download URL, see [Index Configuration](
-    /// https://doc.rust-lang.org/nightly/cargo/reference/registry-index.html#index-configuration).
-    pub dl: String,
-
-    /// API endpoint for the registry. This is what's actually hit to perform
-    /// operations like yanks, owner modifications, publish new crates, etc.
-    /// If this is None, the registry does not support API commands.
-    pub api: Option<String>,
-
-    /// Whether all operations require authentication. See [RFC 3139].
-    ///
-    /// [RFC 3139]: https://rust-lang.github.io/rfcs/3139-cargo-alternative-registry-auth.html
-    #[serde(default)]
-    pub auth_required: bool,
 }
 
 /// Result from loading data from a registry.
@@ -480,11 +433,8 @@ impl<'gctx> RegistrySource<'gctx> {
     /// Creates a [`Source`] of a "remote" registry.
     /// It could be either an HTTP-based [`http_remote::HttpRegistry`] or
     /// a Git-based [`remote::RemoteRegistry`].
-    ///
-    /// * `yanked_whitelist` --- Packages allowed to be used, even if they are yanked.
     pub fn remote(
         source_id: SourceId,
-        yanked_whitelist: &HashSet<PackageId>,
         gctx: &'gctx GlobalContext,
     ) -> CargoResult<RegistrySource<'gctx>> {
         assert!(source_id.is_remote_registry());
@@ -501,28 +451,20 @@ impl<'gctx> RegistrySource<'gctx> {
             Box::new(remote::RemoteRegistry::new(source_id, gctx, &name)) as Box<_>
         };
 
-        Ok(RegistrySource::new(
-            source_id,
-            gctx,
-            &name,
-            ops,
-            yanked_whitelist,
-        ))
+        Ok(RegistrySource::new(source_id, gctx, &name, ops))
     }
 
     /// Creates a [`Source`] of a local registry, with [`local::LocalRegistry`] under the hood.
     ///
     /// * `path` --- The root path of a local registry on the file system.
-    /// * `yanked_whitelist` --- Packages allowed to be used, even if they are yanked.
     pub fn local(
         source_id: SourceId,
         path: &Path,
-        yanked_whitelist: &HashSet<PackageId>,
         gctx: &'gctx GlobalContext,
     ) -> RegistrySource<'gctx> {
         let name = short_name(source_id, false);
         let ops = local::LocalRegistry::new(path, gctx, &name);
-        RegistrySource::new(source_id, gctx, &name, Box::new(ops), yanked_whitelist)
+        RegistrySource::new(source_id, gctx, &name, Box::new(ops))
     }
 
     /// Creates a source of a registry. This is a inner helper function.
@@ -530,13 +472,11 @@ impl<'gctx> RegistrySource<'gctx> {
     /// * `name` --- Name of a path segment which may affect where `.crate`
     ///   tarballs, the registry index and cache are stored. Expect to be unique.
     /// * `ops` --- The underlying [`RegistryData`] type.
-    /// * `yanked_whitelist` --- Packages allowed to be used, even if they are yanked.
     fn new(
         source_id: SourceId,
         gctx: &'gctx GlobalContext,
         name: &str,
         ops: Box<dyn RegistryData + 'gctx>,
-        yanked_whitelist: &HashSet<PackageId>,
     ) -> RegistrySource<'gctx> {
         // Before starting to work on the registry, make sure that
         // `<cargo_home>/registry` is marked as excluded from indexing and
@@ -559,7 +499,7 @@ impl<'gctx> RegistrySource<'gctx> {
             gctx,
             source_id,
             index: index::RegistryIndex::new(source_id, ops.index_path(), gctx),
-            yanked_whitelist: RefCell::new(yanked_whitelist.clone()),
+            yanked_whitelist: RefCell::new(HashSet::new()),
             ops,
             selected_precise_yanked: RefCell::new(HashSet::new()),
         }
@@ -965,11 +905,6 @@ impl<'gctx> Source for RegistrySource<'gctx> {
     }
 }
 
-impl RegistryConfig {
-    /// File name of [`RegistryConfig`].
-    const NAME: &'static str = "config.json";
-}
-
 /// Get the maximum unpack size that Cargo permits
 /// based on a given `size` of your compressed file.
 ///
@@ -1069,6 +1004,14 @@ fn unpack(
                 "invalid tarball downloaded, contains \
                      a file at {entry_path:?} which isn't under {prefix:?}",
             )
+        }
+
+        // Prevent unpacking symlinks and other unexpected entry types
+        match entry.header().entry_type() {
+            EntryType::Regular | EntryType::Directory => {}
+            t => anyhow::bail!(
+                "invalid tarball downloaded, contains an entry at {entry_path:?} with invalid type {t:?}",
+            ),
         }
 
         // Prevent unpacking the lockfile from the crate itself.

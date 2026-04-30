@@ -29,7 +29,7 @@ fn profile_overrides() {
         .build();
     p.cargo("build -v").with_stderr_data(str![[r#"
 [COMPILING] test v0.0.0 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name test --edition=2015 src/lib.rs [..]--crate-type lib --emit=[..]link[..] -C opt-level=1[..] -C debug-assertions=on[..] -C metadata=[..] -C rpath --out-dir [ROOT]/foo/target/debug/deps [..] -L dependency=[ROOT]/foo/target/debug/deps`
+[RUNNING] `rustc --crate-name test --edition=2015 src/lib.rs [..]--crate-type lib --emit=[..]link[..] -C opt-level=1[..] -C debug-assertions=on[..] -C metadata=[..] -C rpath --out-dir [ROOT]/foo/target/debug/deps [..] -L dependency=[ROOT]/foo/target/debug/deps[..]`
 [FINISHED] `dev` profile [optimized] target(s) in [ELAPSED]s
 
 "#]]).run();
@@ -56,7 +56,7 @@ fn opt_level_override_0() {
         .build();
     p.cargo("build -v").with_stderr_data(str![[r#"
 [COMPILING] test v0.0.0 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name test --edition=2015 src/lib.rs [..]--crate-type lib --emit=[..]link[..]-C debuginfo=2 [..] -C metadata=[..] --out-dir [ROOT]/foo/target/debug/deps -L dependency=[ROOT]/foo/target/debug/deps`
+[RUNNING] `rustc --crate-name test --edition=2015 src/lib.rs [..]--crate-type lib --emit=[..]link[..]-C debuginfo=2 [..] -C metadata=[..] --out-dir [ROOT]/foo/target/debug/deps -L dependency=[ROOT]/foo/target/debug/deps[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]]).run();
@@ -82,7 +82,7 @@ fn debug_override_1() {
         .build();
     p.cargo("build -v").with_stderr_data(str![[r#"
 [COMPILING] test v0.0.0 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name test --edition=2015 src/lib.rs [..]--crate-type lib --emit=[..]link[..]-C debuginfo=1 [..]-C metadata=[..] --out-dir [ROOT]/foo/target/debug/deps -L dependency=[ROOT]/foo/target/debug/deps`
+[RUNNING] `rustc --crate-name test --edition=2015 src/lib.rs [..]--crate-type lib --emit=[..]link[..]-C debuginfo=1 [..]-C metadata=[..] --out-dir [ROOT]/foo/target/debug/deps -L dependency=[ROOT]/foo/target/debug/deps[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]]).run();
@@ -120,7 +120,7 @@ fn check_opt_level_override(profile_level: &str, rustc_level: &str) {
         -C debug-assertions=on[..] \
         -C metadata=[..] \
         --out-dir [..] \
-        -L dependency=[ROOT]/foo/target/debug/deps`
+        -L dependency=[ROOT]/foo/target/debug/deps[..]`
 [FINISHED] `dev` profile [..]+ debuginfo] target(s) in [ELAPSED]s
 ",
             level = rustc_level
@@ -197,7 +197,7 @@ fn top_level_overrides_deps() {
         -C debuginfo=2 [..]\
         -C metadata=[..] \
         --out-dir [ROOT]/foo/target/release/deps \
-        -L dependency=[ROOT]/foo/target/release/deps`
+        -L dependency=[ROOT]/foo/target/release/deps[..]`
 [COMPILING] test v0.0.0 ([ROOT]/foo)
 [RUNNING] `rustc --crate-name test --edition=2015 src/lib.rs [..]--crate-type lib \
         --emit=[..]link \
@@ -208,7 +208,7 @@ fn top_level_overrides_deps() {
         -L dependency=[ROOT]/foo/target/release/deps \
         --extern foo=[ROOT]/foo/target/release/deps/\
                      {prefix}foo[..]{suffix} \
-        --extern foo=[ROOT]/foo/target/release/deps/libfoo.rlib`
+        --extern foo=[ROOT]/foo/target/release/deps/libfoo.rlib[..]`
 [FINISHED] `release` profile [optimized + debuginfo] target(s) in [ELAPSED]s
 ",
             prefix = env::consts::DLL_PREFIX,
@@ -361,8 +361,9 @@ fn profile_panic_test_bench() {
 
     p.cargo("build")
         .with_stderr_data(str![[r#"
-[WARNING] `panic` setting is ignored for `bench` profile
-[WARNING] `panic` setting is ignored for `test` profile
+[WARNING] Cargo.toml: `panic` setting is ignored for `bench` profile
+[WARNING] Cargo.toml: `panic` setting is ignored for `test` profile
+[WARNING] `foo` (manifest) generated 2 warnings
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -390,7 +391,7 @@ fn profile_doc_deprecated() {
 
     p.cargo("build")
         .with_stderr_data(str![[r#"
-[WARNING] profile `doc` is deprecated and has no effect
+[WARNING] Cargo.toml: profile `doc` is deprecated and has no effect
 ...
 "#]])
         .run();
@@ -954,138 +955,5 @@ fn profile_hint_mostly_unused_nightly() {
         .with_stderr_does_not_contain(
             "[RUNNING] `rustc --crate-name foo [..] -Zhint-mostly-unused [..]",
         )
-        .run();
-}
-
-#[cargo_test]
-fn frame_pointers_force_on() {
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-                edition = "2015"
-
-                [profile.release]
-                frame-pointers = "force-on"
-            "#,
-        )
-        .file("src/main.rs", "fn main() {}")
-        .build();
-
-    p.cargo("build --release -v")
-        .with_stderr_data(str![[r#"
-[COMPILING] foo v0.1.0 ([ROOT]/foo)
-[RUNNING] `rustc [..] -C force-frame-pointers=on [..]`
-[FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
-
-"#]])
-        .run();
-}
-
-#[cargo_test]
-fn frame_pointers_force_off() {
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-                edition = "2015"
-
-                [profile.release]
-                frame-pointers = "force-off"
-            "#,
-        )
-        .file("src/main.rs", "fn main() {}")
-        .build();
-
-    p.cargo("build --release -v")
-        .with_stderr_data(str![[r#"
-[COMPILING] foo v0.1.0 ([ROOT]/foo)
-[RUNNING] `rustc [..] -C force-frame-pointers=off [..]`
-[FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
-
-"#]])
-        .run();
-}
-
-#[cargo_test]
-fn frame_pointers_unspecified() {
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-                edition = "2015"
-            "#,
-        )
-        .file("src/main.rs", "fn main() {}")
-        .build();
-
-    p.cargo("build -v")
-        .with_stderr_does_not_contain("[RUNNING] `rustc [..] -C force-frame-pointers[..]`")
-        .run();
-}
-
-#[cargo_test]
-fn frame_pointers_default_overrides_parent() {
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-                edition = "2015"
-
-                [profile.release]
-                frame-pointers = "force-on"
-
-                [profile.myprofile]
-                inherits = "release"
-                frame-pointers = "default"
-            "#,
-        )
-        .file("src/main.rs", "fn main() {}")
-        .build();
-
-    p.cargo("build --profile myprofile -v")
-        .with_stderr_does_not_contain("[RUNNING] `rustc [..] -C force-frame-pointers[..]`")
-        .run();
-}
-
-#[cargo_test]
-fn frame_pointers_invalid_value() {
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.1.0"
-                edition = "2015"
-
-                [profile.release]
-                frame-pointers = "invalid"
-            "#,
-        )
-        .file("src/main.rs", "fn main() {}")
-        .build();
-
-    p.cargo("build --release")
-        .with_status(101)
-        .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  `frame-pointers` setting of `invalid` is not a valid setting, must be `"force-on"`, `"force-off"`, or `"default"`.
-
-"#]])
         .run();
 }

@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use cargo_util_schemas::manifest::InheritableDependency;
-use cargo_util_schemas::manifest::TomlToolLints;
 use cargo_util_terminal::report::AnnotationKind;
 use cargo_util_terminal::report::Group;
 use cargo_util_terminal::report::Level;
@@ -18,7 +17,7 @@ use crate::core::MaybePackage;
 use crate::core::Workspace;
 use crate::diagnostics::DiagnosticStats;
 use crate::diagnostics::Lint;
-use crate::diagnostics::LintLevel;
+use crate::diagnostics::LintLevelProduct;
 use crate::diagnostics::get_key_value_span;
 use crate::diagnostics::rel_cwd_manifest_path;
 
@@ -48,22 +47,18 @@ regex = "1"
 };
 
 #[instrument(skip_all)]
-pub fn unused_workspace_dependencies(
+pub(crate) fn lint_workspace(
     ws: &Workspace<'_>,
     maybe_pkg: &MaybePackage,
     manifest_path: &Path,
-    cargo_lints: &TomlToolLints,
-    stats: &mut DiagnosticStats,
+    level: LintLevelProduct,
+    pkg_stats: &mut DiagnosticStats,
     gctx: &GlobalContext,
 ) -> CargoResult<()> {
-    let (lint_level, source) = LINT.level(
-        cargo_lints,
-        ws.lowest_rust_version(),
-        maybe_pkg.unstable_features(),
-    );
-    if lint_level == LintLevel::Allow {
-        return Ok(());
-    }
+    let LintLevelProduct {
+        level: lint_level,
+        source,
+    } = level;
 
     let workspace_deps: IndexSet<_> = maybe_pkg
         .original_toml()
@@ -171,7 +166,7 @@ pub fn unused_workspace_dependencies(
             report.push(help);
         }
 
-        stats.record_lint(lint_level);
+        pkg_stats.record_lint(lint_level);
         gctx.shell().print_report(&report, lint_level.force())?;
     }
 

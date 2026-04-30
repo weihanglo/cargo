@@ -10,14 +10,16 @@ use crate::util::GlobalContext;
 mod lint;
 mod report;
 
+pub mod passes;
 pub mod rules;
 
-pub use lint::{Lint, LintGroup, LintLevel, LintLevelSource};
+pub use lint::{Lint, LintGroup, LintLevel, LintLevelProduct, LintLevelSource};
 pub use report::{AsIndex, get_key_value, get_key_value_span, rel_cwd_manifest_path};
 pub use rules::{LINT_GROUPS, LINTS};
 
 pub struct DiagnosticStats {
     warning_count: usize,
+    lint_warning_count: usize,
     error_count: usize,
 }
 
@@ -25,8 +27,21 @@ impl DiagnosticStats {
     pub fn new() -> Self {
         Self {
             warning_count: 0,
+            lint_warning_count: 0,
             error_count: 0,
         }
+    }
+
+    pub fn lint_warning_count(&self) -> usize {
+        self.lint_warning_count
+    }
+
+    pub fn warning_count(&self) -> usize {
+        self.warning_count
+    }
+
+    pub fn error_count(&self) -> usize {
+        self.error_count
     }
 
     pub fn record_warning(&mut self) {
@@ -43,6 +58,7 @@ impl DiagnosticStats {
                 self.record_error();
             }
             LintLevel::Warn => {
+                self.lint_warning_count += 1;
                 self.record_warning();
             }
             LintLevel::Allow => {}
@@ -81,6 +97,28 @@ impl DiagnosticStats {
     }
 }
 
+impl std::ops::Add for DiagnosticStats {
+    type Output = DiagnosticStats;
+
+    fn add(mut self, rhs: Self) -> Self::Output {
+        self += rhs;
+        self
+    }
+}
+
+impl std::ops::AddAssign for DiagnosticStats {
+    fn add_assign(&mut self, rhs: Self) {
+        let DiagnosticStats {
+            warning_count,
+            lint_warning_count,
+            error_count,
+        } = rhs;
+        self.warning_count += warning_count;
+        self.lint_warning_count += lint_warning_count;
+        self.error_count += error_count;
+    }
+}
+
 /// Scope at which a lint runs: package-level or workspace-level.
 pub enum ManifestFor<'a> {
     /// Lint runs for a specific package.
@@ -93,7 +131,7 @@ pub enum ManifestFor<'a> {
 }
 
 impl ManifestFor<'_> {
-    fn lint_level(&self, pkg_lints: &TomlToolLints, lint: &Lint) -> (LintLevel, LintLevelSource) {
+    fn lint_level(&self, pkg_lints: &TomlToolLints, lint: &Lint) -> LintLevelProduct {
         lint.level(pkg_lints, self.rust_version(), self.unstable_features())
     }
 

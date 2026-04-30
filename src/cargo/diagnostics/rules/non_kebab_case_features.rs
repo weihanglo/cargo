@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use cargo_util_schemas::manifest::TomlToolLints;
 use cargo_util_terminal::report::AnnotationKind;
 use cargo_util_terminal::report::Group;
 use cargo_util_terminal::report::Level;
@@ -13,9 +12,11 @@ use super::RESTRICTION;
 use crate::CargoResult;
 use crate::GlobalContext;
 use crate::core::Package;
+use crate::core::Workspace;
 use crate::diagnostics::DiagnosticStats;
 use crate::diagnostics::Lint;
 use crate::diagnostics::LintLevel;
+use crate::diagnostics::LintLevelProduct;
 use crate::diagnostics::LintLevelSource;
 use crate::diagnostics::get_key_value_span;
 use crate::diagnostics::rel_cwd_manifest_path;
@@ -58,34 +59,30 @@ foo-bar = []
 };
 
 #[instrument(skip_all)]
-pub fn non_kebab_case_features(
+pub(crate) fn lint_package(
+    _ws: &Workspace<'_>,
     pkg: &Package,
     manifest_path: &Path,
-    cargo_lints: &TomlToolLints,
-    stats: &mut DiagnosticStats,
+    level: LintLevelProduct,
+    pkg_stats: &mut DiagnosticStats,
     gctx: &GlobalContext,
 ) -> CargoResult<()> {
-    let (lint_level, source) = LINT.level(
-        cargo_lints,
-        pkg.rust_version(),
-        pkg.manifest().unstable_features(),
-    );
-
-    if lint_level == LintLevel::Allow {
-        return Ok(());
-    }
+    let LintLevelProduct {
+        level: lint_level,
+        source,
+    } = level;
 
     let manifest_path = rel_cwd_manifest_path(manifest_path, gctx);
 
-    lint_package(pkg, &manifest_path, lint_level, source, stats, gctx)
+    lint_package_inner(pkg, &manifest_path, lint_level, source, pkg_stats, gctx)
 }
 
-fn lint_package(
+fn lint_package_inner(
     pkg: &Package,
     manifest_path: &str,
     lint_level: LintLevel,
     source: LintLevelSource,
-    stats: &mut DiagnosticStats,
+    pkg_stats: &mut DiagnosticStats,
     gctx: &GlobalContext,
 ) -> CargoResult<()> {
     for original_name in pkg.summary().features().keys() {
@@ -147,7 +144,7 @@ fn lint_package(
             report.push(help);
         }
 
-        stats.record_lint(lint_level);
+        pkg_stats.record_lint(lint_level);
         gctx.shell().print_report(&report, lint_level.force())?;
     }
 
