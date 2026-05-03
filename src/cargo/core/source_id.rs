@@ -8,6 +8,7 @@ use crate::util::interning::InternedString;
 use crate::util::{CanonicalUrl, CargoResult, GlobalContext, IntoUrl, context};
 
 use anyhow::Context as _;
+use cargo_util::Sha256;
 use cargo_util_schemas::core::PatchChecksum;
 use cargo_util_schemas::url_ext::UrlExt as _;
 use serde::de;
@@ -562,6 +563,40 @@ impl SourceId {
         }))
     }
 
+    /// Patches ourselves to a [`SourceKind::Patched`] source ID.
+    pub fn with_patches(
+        self,
+        patches: Vec<PathBuf>,
+        gctx: &GlobalContext,
+    ) -> CargoResult<SourceId> {
+        let mut hasher = Sha256::new();
+        for patch in &patches {
+            hasher
+                .update_path(patch)
+                .with_context(|| format!("failed to checksum {}", patch.display()))?;
+        }
+        let cksum = PatchChecksum::new(hasher.finish_hex());
+
+        // The patch paths are registered during SourceId construction,
+        // so later when constructing the actual PatchedSource
+        // it can retrieve file paths from gctx.
+        gctx.register_patch_paths(cksum.clone(), patches);
+
+        let patched_kind = SourceKind::Patched(cksum);
+
+        // The stored URL must include the kind prefix (e.g. `registry+https://...`)
+        // so `PatchedSource::new` can reconstruct the underlying SourceId via `from_url`.
+        // This roundtrip is needed because `as_encoded_url` is the only serializer
+        // that knows how to encode kind prefix and git reference query params.
+        let url: Url = self
+            .as_encoded_url()
+            .to_string()
+            .parse()
+            .expect("valid url");
+        let registry_key = self.inner.registry_key.clone();
+        SourceId::new(patched_kind, url, registry_key)
+    }
+
     /// Returns `true` if the remote registry is the standard <https://crates.io>.
     pub fn is_crates_io(self) -> bool {
         match self.inner.kind {
@@ -923,6 +958,17 @@ mod tests {
             assert_data_eq!(gen_hash(source_id), str!["10423446877655960172"].raw());
             assert_data_eq!(short_hash(&source_id), str!["6c8ad69db585a790"].raw());
         }
+
+        let source_id = {
+            let to_patch = SourceId::for_registry(&url).unwrap();
+            let tmp_dir = tempfile::tempdir().unwrap();
+            let gctx = GlobalContext::default().unwrap();
+            let patch_file = tmp_dir.path().join("test.patch");
+            std::fs::write(&patch_file, b"content").unwrap();
+            to_patch.with_patches(vec![patch_file], &gctx).unwrap()
+        };
+        assert_data_eq!(gen_hash(source_id), str!["17404058201164849255"].raw());
+        assert_data_eq!(short_hash(&source_id), str!["67a0a72ab9a287f1"].raw());
     }
 
     #[test]
@@ -954,6 +1000,25 @@ mod tests {
             ser1,
             "git+https://host/path?branch=*-._%2B20%2530+Z%2Fz%23foo%3Dbar%26zap%5B%5D%3Fto%5C%28%29%27%22"
         );
+    }
+
+    #[test]
+    fn patched_serde_roundtrip() {
+        let url = "file:///tmp/ws/crate".into_url().unwrap();
+        let source_id = {
+            let branch = GitReference::Branch("main".to_owned());
+            let to_patch = SourceId::for_git(&url, branch).unwrap();
+            let tmp_dir = tempfile::tempdir().unwrap();
+            let gctx = GlobalContext::default().unwrap();
+            let patch_file = tmp_dir.path().join("test.patch");
+            std::fs::write(&patch_file, b"content").unwrap();
+            to_patch.with_patches(vec![patch_file], &gctx).unwrap()
+        };
+        let formatted = format!("{}", source_id.as_url());
+        let deserialized = SourceId::from_url(&formatted).unwrap();
+        let literal = "patched+git+file:///tmp/ws/crate?branch=main&patch-cksum=ed7002b439e9ac845f22357d822bac1444730fbdb6016d3ec9432297b9ec9f73";
+        assert_eq!(formatted, literal);
+        assert_eq!(source_id, deserialized);
     }
 }
 
