@@ -167,7 +167,7 @@ fn warns_on_resolver_config_without_flag() {
 
     p.cargo("generate-lockfile")
         .with_stderr_data(str![[r#"
-[WARNING] unused config key `resolver.incompatible-publish-age` in `[ROOT]/foo/.cargo/config.toml`
+[WARNING] ignoring `resolver.incompatible-publish-age` without `-Zmin-publish-age`
 [UPDATING] `dummy-registry` index
 [LOCKING] 1 package to latest compatible version
 
@@ -328,7 +328,6 @@ fn incompatible_publish_age_allow() {
         .masquerade_as_nightly_cargo(&["min-publish-age"])
         .env("__CARGO_TEST_INVOCATION_TIME", NOW)
         .with_stderr_data(str![[r#"
-[WARNING] unused config key `resolver.incompatible-publish-age` in `[ROOT]/foo/.cargo/config.toml`
 [UPDATING] `dummy-registry` index
 [LOCKING] 1 package to latest compatible version
 
@@ -392,7 +391,6 @@ fn incompatible_publish_age_deny() {
         .masquerade_as_nightly_cargo(&["min-publish-age"])
         .env("__CARGO_TEST_INVOCATION_TIME", NOW)
         .with_stderr_data(str![[r#"
-[WARNING] unused config key `resolver.incompatible-publish-age` in `[ROOT]/foo/.cargo/config.toml`
 [UPDATING] `dummy-registry` index
 [LOCKING] 1 package to latest compatible version
 
