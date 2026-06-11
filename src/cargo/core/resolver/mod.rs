@@ -351,6 +351,7 @@ fn activate_deps_loop(
                         Err(errors::activation_error(
                             &resolver_ctx,
                             registry.registry(),
+                            registry.version_prefs(),
                             &parent,
                             &dep,
                             &conflicting_activations,
