@@ -3,11 +3,20 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use cargo_util_schemas::core::PartialVersion;
 
-use crate::core::{Dependency, PackageId, Summary};
+use crate::core::Dependency;
+use crate::core::PackageId;
+use crate::core::SourceId;
+use crate::core::Summary;
+use crate::util::CargoResult;
+use crate::util::GlobalContext;
+use crate::util::context::CargoResolverConfig;
+use crate::util::context::IncompatiblePublishAge;
 use crate::util::interning::InternedString;
+use crate::util::time_span::maybe_parse_time_span;
 
 /// A collection of preferences for particular package versions.
 ///
@@ -23,6 +32,7 @@ pub struct VersionPreferences {
     version_ordering: VersionOrdering,
     rust_versions: Vec<PartialVersion>,
     publish_time: Option<jiff::Timestamp>,
+    publish_age: Option<PublishAgePolicy>,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq, Hash, Debug)]
@@ -56,6 +66,16 @@ impl VersionPreferences {
 
     pub fn publish_time(&mut self, publish_time: jiff::Timestamp) {
         self.publish_time = Some(publish_time);
+    }
+
+    pub fn publish_age(&mut self, policy: PublishAgePolicy) {
+        self.publish_age = Some(policy);
+    }
+
+    /// Returns the version's publish-age if it is too new for the configured
+    /// `min-publish-age`, otherwise `None`.
+    pub fn too_new(&self, summary: &Summary) -> Option<jiff::SignedDuration> {
+        self.publish_age.as_ref()?.too_new(summary)
     }
 
     /// Whether the given package is preferred.
@@ -130,6 +150,106 @@ impl VersionPreferences {
             .iter()
             .filter(|max| rust_version.is_compatible_with(max))
             .count()
+    }
+}
+
+/// Snapshot of the `min-publish-age` configuration before resolution started.
+#[derive(Debug)]
+pub struct PublishAgePolicy {
+    /// Reference "now" from [`GlobalContext::invocation_time`].
+    invocation_time: jiff::Timestamp,
+    /// `registry.global-min-publish-age`
+    global: Option<Duration>,
+    /// `registry.min-publish-age`
+    crates_io: Option<Duration>,
+    /// `registries.<name>.min-publish-age`
+    per_registry: HashMap<String, Duration>,
+}
+
+impl PublishAgePolicy {
+    /// Builds the policy from `min-publish-age` configuration.
+    ///
+    /// Returns `None` when either meets
+    ///
+    /// * the `-Zmin-publish-age` gate is off
+    /// * the resolver is configured to allow pubtime-incompatible versions
+    /// * no threshold is configured at all
+    pub fn new(gctx: &GlobalContext) -> CargoResult<Option<Self>> {
+        if !gctx.cli_unstable().min_publish_age {
+            return Ok(None);
+        }
+
+        // An explicit `resolver.incompatible-publish-age = "allow"` disables
+        // the filter entirely.
+        let resolver_config = gctx.get::<Option<CargoResolverConfig>>("resolver")?;
+        if resolver_config
+            .and_then(|c| c.incompatible_publish_age)
+            .is_some_and(|v| v == IncompatiblePublishAge::Allow)
+        {
+            return Ok(None);
+        }
+
+        let parse = |raw: Option<String>| -> Option<Duration> {
+            let raw = raw?;
+            // A configured value of `"0"` disables the threshold.
+            if raw == "0" {
+                return None;
+            }
+            maybe_parse_time_span(&raw)
+        };
+
+        let global = parse(gctx.get::<Option<String>>("registry.global-min-publish-age")?);
+        let crates_io = parse(gctx.get::<Option<String>>("registry.min-publish-age")?);
+        let mut per_registry = HashMap::new();
+        if let Some(registries) =
+            gctx.get::<Option<HashMap<String, HashMap<String, String>>>>("registries")?
+        {
+            for (name, table) in registries {
+                if let Some(duration) = parse(table.get("min-publish-age").cloned()) {
+                    per_registry.insert(name, duration);
+                }
+            }
+        }
+
+        if global.is_none() && crates_io.is_none() && per_registry.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(Self {
+            invocation_time: gctx.invocation_time(),
+            global,
+            crates_io,
+            per_registry,
+        }))
+    }
+
+    /// Resolves the minimum publish age for a given registry source.
+    ///
+    /// Priority:
+    ///
+    /// 1. `registries.<name>.min-publish-age`
+    /// 2. `registry.min-publish-age` (default registry)
+    /// 3. `registry.global-min-publish-age`
+    fn min_age(&self, source_id: SourceId) -> Option<Duration> {
+        let specific = if let Some(name) = source_id.alt_registry_key() {
+            self.per_registry.get(name).copied()
+        } else if source_id.is_crates_io() {
+            self.crates_io
+        } else {
+            None
+        };
+        specific.or(self.global)
+    }
+
+    /// Returns the version's publish-age if it is too new for its registry.
+    ///
+    /// `None` means  the version is acceptable
+    pub fn too_new(&self, summary: &Summary) -> Option<jiff::SignedDuration> {
+        let pubtime = summary.pubtime()?;
+        let min_age = self.min_age(summary.source_id())?;
+        let span = jiff::Span::new().seconds(min_age.as_secs() as i64);
+        let max_pubtime = self.invocation_time.checked_sub(span).ok()?;
+        (pubtime > max_pubtime).then(|| self.invocation_time.duration_since(pubtime))
     }
 }
 
