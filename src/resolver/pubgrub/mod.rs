@@ -32,6 +32,7 @@ use crate::workspace::{Dependency, PackageIdSpec, Registry, Summary};
 use crate::context::GlobalContext;
 use crate::util::errors::CargoResult;
 
+mod package;
 mod semver_pubgrub;
 
 /// Resolve the dependency graph using the PubGrub algorithm.
