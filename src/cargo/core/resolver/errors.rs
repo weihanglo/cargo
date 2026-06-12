@@ -255,6 +255,7 @@ pub(super) fn activation_error(
             locked_version
         );
         for candidate in version_candidates {
+            let ver = candidate.package_id().version();
             match candidate {
                 IndexSummary::Candidate(summary) => {
                     if let Some(age) = version_prefs.too_new(&summary) {
@@ -267,57 +268,41 @@ pub(super) fn activation_error(
                             Ok(age) => {
                                 let _ = writeln!(
                                     &mut msg,
-                                    "  version {} is too new (published {age:#} ago)",
-                                    summary.version(),
+                                    "  version {ver} is too new (published {age:#} ago)",
                                 );
                             }
                             Err(e) => {
                                 tracing::warn!("failed to round `{age}`: {e}");
-                                let _ = writeln!(
-                                    &mut msg,
-                                    "  version {} is too new",
-                                    summary.version()
-                                );
+                                let _ = writeln!(&mut msg, "  version {ver} is too new",);
                             }
                         }
                     } else {
                         // HACK: If this was a real candidate, we wouldn't hit this case.
                         // so it must be a patch which get normalized to being a candidate
-                        let _ =
-                            writeln!(&mut msg, "  version {} is unavailable", summary.version());
+                        let _ = writeln!(&mut msg, "  version {ver} is unavailable");
                     }
                 }
-                IndexSummary::Yanked(summary) => {
-                    let _ = writeln!(&mut msg, "  version {} is yanked", summary.version());
+                IndexSummary::Yanked(_) => {
+                    let _ = writeln!(&mut msg, "  version {ver} is yanked");
                 }
-                IndexSummary::Offline(summary) => {
-                    let _ = writeln!(&mut msg, "  version {} is not cached", summary.version());
+                IndexSummary::Offline(_) => {
+                    let _ = writeln!(&mut msg, "  version {ver} is not cached");
                 }
                 IndexSummary::Unsupported(summary, schema_version) => {
                     if let Some(rust_version) = summary.rust_version() {
                         // HACK: technically its unsupported and we shouldn't make assumptions
                         // about the entry but this is limited and for diagnostics purposes
-                        let _ = writeln!(
-                            &mut msg,
-                            "  version {} requires cargo {}",
-                            summary.version(),
-                            rust_version
-                        );
+                        let _ =
+                            writeln!(&mut msg, "  version {ver} requires cargo {rust_version}",);
                     } else {
                         let _ = writeln!(
                             &mut msg,
-                            "  version {} requires a Cargo version that supports index version {}",
-                            summary.version(),
-                            schema_version
+                            "  version {ver} requires a Cargo version that supports index version {schema_version}",
                         );
                     }
                 }
-                IndexSummary::Invalid(summary) => {
-                    let _ = writeln!(
-                        &mut msg,
-                        "  version {}'s index entry is invalid",
-                        summary.version()
-                    );
+                IndexSummary::Invalid(_) => {
+                    let _ = writeln!(&mut msg, "  version {ver}'s index entry is invalid",);
                 }
             }
         }
