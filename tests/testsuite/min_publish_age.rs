@@ -460,7 +460,7 @@ fn no_candidates_error() {
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
 [ERROR] failed to select a version for the requirement `bar = "^1"`
-  version 1.1.0 is too new (published 2d ago)
+  version 1.1.0 is too new (published 2 days ago)
 location searched: `dummy-registry` index (which is replacing registry `crates-io`)
 required by package `foo v0.0.0 ([ROOT]/foo)`
 
@@ -943,7 +943,7 @@ dependencies = [
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
 [ERROR] failed to select a version for the requirement `bar = "^1"`
-  version 1.1.0 is too new (published 2d ago)
+  version 1.1.0 is too new (published 2 days ago)
 location searched: `dummy-registry` index (which is replacing registry `crates-io`)
 required by package `foo v0.0.0 ([ROOT]/foo)`
 
@@ -1120,7 +1120,7 @@ fn update_breaking_skips_too_new() {
 [UPDATING] `dummy-registry` index
 [UPGRADING] bar ^1 -> ^2
 [ERROR] failed to select a version for the requirement `bar = "^2.1.0"`
-  version 2.1.0 is too new (published 1d ago)
+  version 2.1.0 is too new (published 24 hours ago)
 location searched: `dummy-registry` index (which is replacing registry `crates-io`)
 required by package `foo v0.0.0 ([ROOT]/foo)`
 

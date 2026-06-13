@@ -259,16 +259,11 @@ pub(super) fn activation_error(
             match candidate {
                 IndexSummary::Candidate(summary) => {
                     if let Some(age) = version_prefs.too_new(&summary) {
-                        let opts = jiff::SpanRound::new()
-                            .largest(jiff::Unit::Day)
-                            .smallest(jiff::Unit::Minute)
-                            .relative(jiff::SpanRelativeTo::days_are_24_hours());
-                        let rounded = jiff::Span::try_from(age).and_then(|span| span.round(opts));
-                        match rounded {
+                        match round_age(age) {
                             Ok(age) => {
                                 let _ = writeln!(
                                     &mut msg,
-                                    "  version {ver} is too new (published {age:#} ago)",
+                                    "  version {ver} is too new (published {age} ago)",
                                 );
                             }
                             Err(e) => {
@@ -581,4 +576,72 @@ pub(crate) fn describe_path<'a>(
     }
 
     String::new()
+}
+
+/// Formats an age as a single, friendly-spelled unit,
+/// never is multi-unit noise.
+fn round_age(age: jiff::SignedDuration) -> Result<String, jiff::Error> {
+    use jiff::Unit;
+    use jiff::fmt::friendly::{Designator, Spacing, SpanPrinter};
+
+    let unit = if age >= jiff::SignedDuration::from_hours(48) {
+        Unit::Day
+    } else if age >= jiff::SignedDuration::from_hours(1) {
+        Unit::Hour
+    } else if age >= jiff::SignedDuration::from_mins(1) {
+        Unit::Minute
+    } else {
+        Unit::Second
+    };
+    let opts = jiff::SpanRound::new()
+        .largest(unit)
+        .smallest(unit)
+        .relative(jiff::SpanRelativeTo::days_are_24_hours());
+    let rounded = jiff::Span::try_from(age)?.round(opts)?;
+    let printer = SpanPrinter::new()
+        .designator(Designator::Verbose)
+        .spacing(Spacing::BetweenUnitsAndDesignators);
+    Ok(printer.span_to_string(&rounded))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::round_age;
+    use jiff::SignedDuration;
+
+    #[track_caller]
+    fn assert_age(secs: i64, expected: &str) {
+        assert_eq!(
+            round_age(SignedDuration::from_secs(secs)).unwrap(),
+            expected
+        );
+    }
+
+    const MIN: i64 = 60;
+    const HOUR: i64 = 60 * MIN;
+    const DAY: i64 = 24 * HOUR;
+
+    #[test]
+    fn rounds_to_a_single_unit() {
+        // `>= 2 days` rounds to the nearest day.
+        assert_age(2 * DAY, "2 days");
+        assert_age(2 * DAY + 8 * HOUR + 23 * MIN, "2 days");
+        assert_age(2 * DAY + 13 * HOUR, "3 days");
+        assert_age(540 * DAY, "540 days");
+
+        // `1 hour ..< 2 days` rounds to the nearest hour.
+        assert_age(47 * HOUR, "47 hours");
+        assert_age(24 * HOUR, "24 hours");
+        assert_age(11 * HOUR + 40 * MIN, "12 hours");
+        assert_age(11 * HOUR + 20 * MIN, "11 hours");
+        assert_age(HOUR, "1 hour");
+
+        // `1 minute ..< 1 hour` rounds to the nearest minute.
+        assert_age(40 * MIN, "40 minutes");
+        assert_age(MIN, "1 minute");
+
+        // `< 1 minute` rounds to the nearest second.
+        assert_age(40, "40 seconds");
+        assert_age(1, "1 second");
+    }
 }
