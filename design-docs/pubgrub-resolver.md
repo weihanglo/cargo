@@ -58,7 +58,7 @@ lockfile identical to the default resolver.
     resolves, derives `VersionPreferences` from the first resolution, mutates
     one input, and asserts the pubgrub graph (nodes **and** edges) matches the
     default resolver (8 tests).
-  - **Curated suite via `CARGO_TEST_PUBGRUB=1`** — the harness convenience
+  - **Curated suite via `__CARGO_TEST_PUBGRUB=1`** — the harness convenience
     helpers route through `-Zpubgrub-resolver` when this env var is set, so the
     pre-existing curated suites run on PubGrub:
     - `tests/resolve.rs`: **37/37 pass**.
@@ -115,16 +115,16 @@ nix develop ~/dev/dotfiles#cargo --command bash -c 'cargo test -p resolver-tests
 
 # Re-run the ENTIRE curated suite through the PubGrub resolver
 nix develop ~/dev/dotfiles#cargo --command bash -c \
-  'CARGO_TEST_PUBGRUB=1 cargo test -p resolver-tests --test resolve --test pubgrub'
+  '__CARGO_TEST_PUBGRUB=1 cargo test -p resolver-tests --test resolve --test pubgrub'
 
-# Re-run the FULL integration testsuite through PubGrub. `CARGO_TEST_PUBGRUB`
+# Re-run the FULL integration testsuite through PubGrub. `__CARGO_TEST_PUBGRUB`
 # is honored at the resolver dispatch fork (resolver::resolve), independent of
 # the nightly-gated `-Zpubgrub-resolver` flag, and is inherited by the child
 # cargo processes the testsuite spawns. Expect failures: many testsuite cases
 # assert exact error text / version-selection ordering the PubGrub path does
 # not reproduce. This is a survey of the gap, not a pass/fail gate.
 nix develop ~/dev/dotfiles#cargo --command bash -c \
-  'CARGO_TEST_PUBGRUB=1 cargo test -p cargo --test testsuite'
+  '__CARGO_TEST_PUBGRUB=1 cargo test -p cargo --test testsuite'
 ```
 
 ### Reproducing the full-tree parity check (the real acceptance test)
@@ -337,7 +337,7 @@ been removed; re-add ad hoc if needed.)
 
 ## 9. Prioritized next steps
 
-1. ~~Run `tests/resolve.rs` through pubgrub.~~ **DONE** via `CARGO_TEST_PUBGRUB`
+1. ~~Run `tests/resolve.rs` through pubgrub.~~ **DONE** via `__CARGO_TEST_PUBGRUB`
    (see §2/§3). `resolve.rs` 37/37, `pubgrub.rs` 28/28; `proptests.rs` also
    passes 5/5 under the env var at the default 256 cases. The env var is now
    *also* honored at the resolver dispatch fork (not just in the resolver-tests
@@ -419,10 +419,10 @@ bc8028b86 feat(resolver): Add PubGrubPackage encoding for the pubgrub resolver
 ## 12. Full-testsuite survey under PubGrub
 
 First run of the entire integration testsuite through PubGrub, via the
-`CARGO_TEST_PUBGRUB` dispatch hook (§3):
+`__CARGO_TEST_PUBGRUB` dispatch hook (§3):
 
 ```sh
-CARGO_TEST_PUBGRUB=1 cargo test -p cargo --test testsuite
+__CARGO_TEST_PUBGRUB=1 cargo test -p cargo --test testsuite
 ```
 
 Result (this environment, against this branch):
