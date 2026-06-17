@@ -85,7 +85,11 @@ pub struct WideName {
 
 impl Display for WideName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}(from {}@{:?}):{}", self.name, self.from, self.from_compat, self.req)
+        write!(
+            f,
+            "{}(from {}@{:?}):{}",
+            self.name, self.from, self.from_compat, self.req
+        )
     }
 }
 
@@ -99,15 +103,25 @@ pub enum PubGrubPackage {
     /// `all_features` is true when every feature/optional dependency should be
     /// activated (the lock-file resolution pass), as opposed to a specific set
     /// selected through [`PubGrubPackage::BucketFeatures`].
-    Bucket { name: BucketName, member: bool, all_features: bool },
+    Bucket {
+        name: BucketName,
+        member: bool,
+        all_features: bool,
+    },
     /// "Feature (or optional dep) of the bucket is enabled".
-    BucketFeatures { name: BucketName, feature: FeatureNamespace },
+    BucketFeatures {
+        name: BucketName,
+        feature: FeatureNamespace,
+    },
     /// "Default features of the bucket are enabled".
     BucketDefaultFeatures { name: BucketName },
     /// A wide dependency spanning multiple buckets.
     Wide { name: WideName },
     /// A wide dependency with a feature enabled.
-    WideFeatures { name: WideName, feature: FeatureNamespace },
+    WideFeatures {
+        name: WideName,
+        feature: FeatureNamespace,
+    },
     /// A wide dependency with default features enabled.
     WideDefaultFeatures { name: WideName },
     /// Enforces global uniqueness of a `links` value.
@@ -139,14 +153,16 @@ impl PubGrubPackage {
         match self {
             PubGrubPackage::Bucket { name, .. }
             | PubGrubPackage::BucketFeatures { name, .. }
-            | PubGrubPackage::BucketDefaultFeatures { name } => {
-                PubGrubPackage::BucketFeatures { name: name.clone(), feature }
-            }
+            | PubGrubPackage::BucketDefaultFeatures { name } => PubGrubPackage::BucketFeatures {
+                name: name.clone(),
+                feature,
+            },
             PubGrubPackage::Wide { name }
             | PubGrubPackage::WideFeatures { name, .. }
-            | PubGrubPackage::WideDefaultFeatures { name } => {
-                PubGrubPackage::WideFeatures { name: name.clone(), feature }
-            }
+            | PubGrubPackage::WideDefaultFeatures { name } => PubGrubPackage::WideFeatures {
+                name: name.clone(),
+                feature,
+            },
             PubGrubPackage::Root | PubGrubPackage::Links { .. } => {
                 panic!("with_feature on non-crate package")
             }
@@ -158,7 +174,11 @@ impl Display for PubGrubPackage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PubGrubPackage::Root => f.write_str("root"),
-            PubGrubPackage::Bucket { name, member, all_features } => {
+            PubGrubPackage::Bucket {
+                name,
+                member,
+                all_features,
+            } => {
                 write!(
                     f,
                     "{name}{}{}",

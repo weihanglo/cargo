@@ -44,8 +44,15 @@ fn pubgrub_gctx() -> GlobalContext {
     let mut gctx = GlobalContext::default().unwrap();
     gctx.nightly_features_allowed = true;
     gctx.configure(
-        0, false, None, false, false, false, &None,
-        &["pubgrub-resolver".to_string()], &[],
+        0,
+        false,
+        None,
+        false,
+        false,
+        false,
+        &None,
+        &["pubgrub-resolver".to_string()],
+        &[],
     )
     .unwrap();
     gctx
@@ -89,14 +96,13 @@ fn lock(deps: Vec<Dependency>, reg: &[Summary]) -> Resolve {
 /// Re-resolve `deps` against `reg` with `prefs` under both resolvers and assert
 /// the resulting graphs are identical.
 #[track_caller]
-fn assert_same_update(deps: Vec<Dependency>, reg: &[Summary], prefs: impl Fn() -> VersionPreferences) {
-    let default = resolve_with_prefs_raw(
-        deps.clone(),
-        reg,
-        pkg_id("root"),
-        &default_gctx(),
-        prefs(),
-    );
+fn assert_same_update(
+    deps: Vec<Dependency>,
+    reg: &[Summary],
+    prefs: impl Fn() -> VersionPreferences,
+) {
+    let default =
+        resolve_with_prefs_raw(deps.clone(), reg, pkg_id("root"), &default_gctx(), prefs());
     let pubgrub = resolve_with_prefs_raw(deps, reg, pkg_id("root"), &pubgrub_gctx(), prefs());
     match (default, pubgrub) {
         (Ok(d), Ok(p)) => {
@@ -129,16 +135,11 @@ fn assert_same_update(deps: Vec<Dependency>, reg: &[Summary], prefs: impl Fn() -
 #[test]
 fn keeps_locked_version_when_newer_published() {
     // Lock against an index that only has foo 1.0.0.
-    let old_reg = registry(vec![
-        pkg(("foo", "1.0.0")),
-    ]);
+    let old_reg = registry(vec![pkg(("foo", "1.0.0"))]);
     let locked = lock(vec![dep_req("foo", "^1")], &old_reg);
 
     // foo 1.1.0 is now published, but the lock prefers 1.0.0.
-    let new_reg = registry(vec![
-        pkg(("foo", "1.0.0")),
-        pkg(("foo", "1.1.0")),
-    ]);
+    let new_reg = registry(vec![pkg(("foo", "1.0.0")), pkg(("foo", "1.1.0"))]);
     assert_same_update(vec![dep_req("foo", "^1")], &new_reg, || {
         prefs_from_lock(&locked, &[])
     });
@@ -148,10 +149,7 @@ fn keeps_locked_version_when_newer_published() {
 /// compatible version while everything else stays put.
 #[test]
 fn update_single_package_advances_only_it() {
-    let old_reg = registry(vec![
-        pkg(("foo", "1.0.0")),
-        pkg(("bar", "1.0.0")),
-    ]);
+    let old_reg = registry(vec![pkg(("foo", "1.0.0")), pkg(("bar", "1.0.0"))]);
     let locked = lock(vec![dep_req("foo", "^1"), dep_req("bar", "^1")], &old_reg);
 
     // Both foo and bar have newer releases now; updating only foo should move
@@ -173,10 +171,7 @@ fn update_single_package_advances_only_it() {
 /// untouched and only selects the new crate (and its subtree).
 #[test]
 fn adding_a_dependency_keeps_the_rest_locked() {
-    let old_reg = registry(vec![
-        pkg(("foo", "1.0.0")),
-        pkg(("foo", "1.1.0")),
-    ]);
+    let old_reg = registry(vec![pkg(("foo", "1.0.0")), pkg(("foo", "1.1.0"))]);
     let locked = lock(vec![dep_req("foo", "^1")], &old_reg);
 
     // Now `bar` is added to the manifest (and bar depends on foo too). foo must
@@ -238,10 +233,7 @@ fn precise_pins_exact_version() {
 /// the newest compatible versions.
 #[test]
 fn full_update_advances_everything() {
-    let old_reg = registry(vec![
-        pkg(("foo", "1.0.0")),
-        pkg(("bar", "1.0.0")),
-    ]);
+    let old_reg = registry(vec![pkg(("foo", "1.0.0")), pkg(("bar", "1.0.0"))]);
     let locked = lock(vec![dep_req("foo", "^1"), dep_req("bar", "^1")], &old_reg);
 
     let new_reg = registry(vec![
@@ -263,16 +255,11 @@ fn full_update_advances_everything() {
 /// preference.
 #[test]
 fn stale_lock_is_overridden_by_constraint() {
-    let old_reg = registry(vec![
-        pkg(("foo", "1.0.0")),
-    ]);
+    let old_reg = registry(vec![pkg(("foo", "1.0.0"))]);
     let locked = lock(vec![dep_req("foo", "^1")], &old_reg);
 
     // The manifest now requires foo ^2; the locked 1.0.0 cannot satisfy it.
-    let new_reg = registry(vec![
-        pkg(("foo", "1.0.0")),
-        pkg(("foo", "2.0.0")),
-    ]);
+    let new_reg = registry(vec![pkg(("foo", "1.0.0")), pkg(("foo", "2.0.0"))]);
     assert_same_update(vec![dep_req("foo", "^2")], &new_reg, || {
         prefs_from_lock(&locked, &[])
     });
@@ -282,9 +269,7 @@ fn stale_lock_is_overridden_by_constraint() {
 /// preference path too, not just exact requirements.
 #[test]
 fn wildcard_dep_keeps_locked_version() {
-    let old_reg = registry(vec![
-        pkg(("foo", "1.0.0")),
-    ]);
+    let old_reg = registry(vec![pkg(("foo", "1.0.0"))]);
     let locked = lock(vec![dep("foo")], &old_reg);
 
     let new_reg = registry(vec![

@@ -54,7 +54,11 @@ pub(super) fn into_resolve<T: Registry>(
 
     for (pkg, version) in solution.iter() {
         match pkg {
-            PubGrubPackage::Bucket { name, member, all_features: _ } => {
+            PubGrubPackage::Bucket {
+                name,
+                member,
+                all_features: _,
+            } => {
                 let pid = PackageId::new(name.name, version.clone(), name.source);
                 package_ids.insert(pid);
                 selected
@@ -102,7 +106,8 @@ pub(super) fn into_resolve<T: Registry>(
     }
 
     for pid in &package_ids {
-        let Some(summary) = provider.summary_for(pid.name(), pid.source_id(), pid.version())? else {
+        let Some(summary) = provider.summary_for(pid.name(), pid.source_id(), pid.version())?
+        else {
             anyhow::bail!("pubgrub selected `{pid}` but it has no summary");
         };
         let act = activations.get(pid);
@@ -118,8 +123,7 @@ pub(super) fn into_resolve<T: Registry>(
             let active = match dep.kind() {
                 DepKind::Development => member,
                 _ => {
-                    !dep.is_optional()
-                        || act.is_some_and(|a| a.deps.contains(&dep.name_in_toml()))
+                    !dep.is_optional() || act.is_some_and(|a| a.deps.contains(&dep.name_in_toml()))
                 }
             };
             if !active {

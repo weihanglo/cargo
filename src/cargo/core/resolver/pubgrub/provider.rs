@@ -178,10 +178,7 @@ impl<'a, T: Registry> Provider<'a, T> {
         version: &Version,
     ) -> Result<Option<Summary>, ProviderError> {
         let candidates = self.candidates(name, source)?;
-        Ok(candidates
-            .iter()
-            .find(|s| s.version() == version)
-            .cloned())
+        Ok(candidates.iter().find(|s| s.version() == version).cloned())
     }
 
     /// If every available version matching `dep` lies in a single compatibility
@@ -298,7 +295,11 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                 use std::ops::Bound;
                 match range.bounding_range() {
                     Some((_, Bound::Included(v))) => Some(v.clone()),
-                    _ => return Err(ProviderError("links package has no concrete version".into())),
+                    _ => {
+                        return Err(ProviderError(
+                            "links package has no concrete version".into(),
+                        ));
+                    }
                 }
             }
             PubGrubPackage::Wide { name }
@@ -342,7 +343,10 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                 if range.as_singleton().is_some() {
                     (conflicts, Reverse(1))
                 } else {
-                    (conflicts, Reverse(self.count_matches(range, name.name, name.source)))
+                    (
+                        conflicts,
+                        Reverse(self.count_matches(range, name.name, name.source)),
+                    )
                 }
             }
             PubGrubPackage::BucketFeatures { name, .. }
@@ -426,7 +430,11 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                 return Ok(Dependencies::Available(deps.into_iter().collect()));
             }
 
-            PubGrubPackage::Bucket { name, member, all_features } => {
+            PubGrubPackage::Bucket {
+                name,
+                member,
+                all_features,
+            } => {
                 let Some(summary) = self.summary_for(name.name, name.source, version)? else {
                     return Ok(Dependencies::Unavailable("no such version".into()));
                 };
@@ -477,7 +485,10 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                 return Ok(Dependencies::Available(deps.into_iter().collect()));
             }
 
-            PubGrubPackage::BucketFeatures { name, feature: FeatureNamespace::Feat(feat) } => {
+            PubGrubPackage::BucketFeatures {
+                name,
+                feature: FeatureNamespace::Feat(feat),
+            } => {
                 let Some(summary) = self.summary_for(name.name, name.source, version)? else {
                     return Ok(Dependencies::Unavailable("no such version".into()));
                 };
@@ -491,9 +502,7 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                     SemverPubgrub::singleton(version.clone()),
                 );
                 let Some(values) = summary.features().get(feat) else {
-                    return Ok(Dependencies::Unavailable(format!(
-                        "no feature `{feat}`"
-                    )));
+                    return Ok(Dependencies::Unavailable(format!("no feature `{feat}`")));
                 };
                 let singleton = SemverPubgrub::singleton(version.clone());
                 for fv in values {
@@ -557,7 +566,10 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                 return Ok(Dependencies::Available(deps.into_iter().collect()));
             }
 
-            PubGrubPackage::BucketFeatures { name, feature: FeatureNamespace::Dep(dep_name) } => {
+            PubGrubPackage::BucketFeatures {
+                name,
+                feature: FeatureNamespace::Dep(dep_name),
+            } => {
                 let Some(summary) = self.summary_for(name.name, name.source, version)? else {
                     return Ok(Dependencies::Unavailable("no such version".into()));
                 };
@@ -616,7 +628,8 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                 if summary.features().contains_key("default") {
                     deps_insert(
                         &mut deps,
-                        package.with_feature(FeatureNamespace::Feat(InternedString::new("default"))),
+                        package
+                            .with_feature(FeatureNamespace::Feat(InternedString::new("default"))),
                         SemverPubgrub::singleton(version.clone()),
                     );
                 }
@@ -625,7 +638,8 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
 
             PubGrubPackage::Wide { name } => {
                 let compat = SemverCompatibility::from(version);
-                let range = opt_req_range(&name.req).intersection(&SemverPubgrub::compatibility(&compat));
+                let range =
+                    opt_req_range(&name.req).intersection(&SemverPubgrub::compatibility(&compat));
                 deps_insert(
                     &mut deps,
                     PubGrubPackage::Bucket {
@@ -644,7 +658,8 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
 
             PubGrubPackage::WideFeatures { name, feature } => {
                 let compat = SemverCompatibility::from(version);
-                let range = opt_req_range(&name.req).intersection(&SemverPubgrub::compatibility(&compat));
+                let range =
+                    opt_req_range(&name.req).intersection(&SemverPubgrub::compatibility(&compat));
                 // Tie this wide-feature decision to the underlying wide package.
                 deps_insert(
                     &mut deps,
@@ -668,7 +683,8 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
 
             PubGrubPackage::WideDefaultFeatures { name } => {
                 let compat = SemverCompatibility::from(version);
-                let range = opt_req_range(&name.req).intersection(&SemverPubgrub::compatibility(&compat));
+                let range =
+                    opt_req_range(&name.req).intersection(&SemverPubgrub::compatibility(&compat));
                 deps_insert(
                     &mut deps,
                     PubGrubPackage::Wide { name: name.clone() },

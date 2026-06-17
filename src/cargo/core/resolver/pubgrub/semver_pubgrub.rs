@@ -216,7 +216,11 @@ impl SemverPubgrub {
 
 impl Display for SemverPubgrub {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SemverPubgrub {{ normal: {}, pre: {} }}", self.normal, self.pre)
+        write!(
+            f,
+            "SemverPubgrub {{ normal: {}, pre: {} }}",
+            self.normal, self.pre
+        )
     }
 }
 
@@ -531,7 +535,9 @@ fn bump_up_to_normal(v: &Version) -> Option<Version> {
     }
 }
 
-fn simplified_bounds_to_normal(bounds: (Bound<Version>, Bound<Version>)) -> (Bound<Version>, Bound<Version>) {
+fn simplified_bounds_to_normal(
+    bounds: (Bound<Version>, Bound<Version>),
+) -> (Bound<Version>, Bound<Version>) {
     let (mut from, mut to) = bounds;
     if let Bound::Included(f) | Bound::Excluded(f) = &from {
         if let Some(n) = bump_up_to_normal(f) {
@@ -659,13 +665,40 @@ mod test {
     #[test]
     fn contains_matches_semver() {
         let reqs = [
-            "^1", "^1.2", "^1.2.3", "~1.2", "~1.2.3", "=1.2.3", ">1.2.3", ">=1.2.3", "<1.2.3",
-            "<=1.2.3", "^0.2", "^0.0.3", "^0", "*", "1.*", "1.2.*", ">=1.2, <1.5",
-            "^1.2.3-alpha", "=1.2.3-beta.1",
+            "^1",
+            "^1.2",
+            "^1.2.3",
+            "~1.2",
+            "~1.2.3",
+            "=1.2.3",
+            ">1.2.3",
+            ">=1.2.3",
+            "<1.2.3",
+            "<=1.2.3",
+            "^0.2",
+            "^0.0.3",
+            "^0",
+            "*",
+            "1.*",
+            "1.2.*",
+            ">=1.2, <1.5",
+            "^1.2.3-alpha",
+            "=1.2.3-beta.1",
         ];
         let vers = [
-            "0.0.1", "0.2.0", "0.2.5", "1.0.0", "1.2.0", "1.2.3", "1.2.4", "1.4.9", "1.5.0",
-            "2.0.0", "1.2.3-alpha", "1.2.3-beta.1", "1.2.3-beta.2",
+            "0.0.1",
+            "0.2.0",
+            "0.2.5",
+            "1.0.0",
+            "1.2.0",
+            "1.2.3",
+            "1.2.4",
+            "1.4.9",
+            "1.5.0",
+            "2.0.0",
+            "1.2.3-alpha",
+            "1.2.3-beta.1",
+            "1.2.3-beta.2",
         ];
         for raw_req in reqs {
             let req = VersionReq::parse(raw_req).unwrap();
@@ -684,7 +717,9 @@ mod test {
     /// Exhaustive-ish cross-check across a grid of operators and operands.
     #[test]
     fn contains_matches_semver_grid() {
-        let operands = ["0", "0.0", "0.0.3", "0.2", "0.2.5", "1", "1.2", "1.2.3", "2.0.0"];
+        let operands = [
+            "0", "0.0", "0.0.3", "0.2", "0.2.5", "1", "1.2", "1.2.3", "2.0.0",
+        ];
         let vers: Vec<Version> = [
             "0.0.1", "0.0.3", "0.2.0", "0.2.5", "1.0.0", "1.2.0", "1.2.3", "2.0.0", "2.1.0",
         ]

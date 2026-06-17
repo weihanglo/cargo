@@ -16,8 +16,15 @@ fn pubgrub_gctx() -> GlobalContext {
     let mut gctx = GlobalContext::default().unwrap();
     gctx.nightly_features_allowed = true;
     gctx.configure(
-        0, false, None, false, false, false, &None,
-        &["pubgrub-resolver".to_string()], &[],
+        0,
+        false,
+        None,
+        false,
+        false,
+        false,
+        &None,
+        &["pubgrub-resolver".to_string()],
+        &[],
     )
     .unwrap();
     gctx
@@ -44,12 +51,7 @@ fn assert_same_graph(deps: Vec<Dependency>, reg: &[Summary]) {
         pkg_id("root"),
         &GlobalContext::default().unwrap(),
     );
-    let pubgrub = resolve_with_global_context_raw(
-        deps,
-        reg,
-        pkg_id("root"),
-        &pubgrub_gctx(),
-    );
+    let pubgrub = resolve_with_global_context_raw(deps, reg, pkg_id("root"), &pubgrub_gctx());
     match (default, pubgrub) {
         (Ok(d), Ok(p)) => {
             let de = edges(&d);
@@ -62,7 +64,11 @@ fn assert_same_graph(deps: Vec<Dependency>, reg: &[Summary]) {
             );
         }
         (Err(_), Err(_)) => {}
-        (d, p) => panic!("resolvers disagree on solvability: default={:?} pubgrub={:?}", d.is_ok(), p.is_ok()),
+        (d, p) => panic!(
+            "resolvers disagree on solvability: default={:?} pubgrub={:?}",
+            d.is_ok(),
+            p.is_ok()
+        ),
     }
 }
 
