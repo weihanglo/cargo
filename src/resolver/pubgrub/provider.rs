@@ -5,7 +5,7 @@
 //! * **async vs. sync.** Cargo's [`RegistryQueryer`] is poll-based and driven by
 //!   an outer `wait()` loop, while pubgrub drives resolution synchronously by
 //!   calling back into the provider. We block on the poll loop inside
-//!   [`Provider::query`], reusing the queryer's caching.
+//!   [`Provider::candidates`], reusing the queryer's caching.
 //! * **registry data vs. the package encoding.** Cargo describes crates with
 //!   [`Summary`]/[`Dependency`]/[`FeatureValue`]; we translate those into the
 //!   [`PubGrubPackage`] encoding on demand in [`Provider::get_dependencies`].

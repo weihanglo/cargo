@@ -48,7 +48,7 @@ use self::provider::{Provider, Root, root_version};
 
 /// Resolve the dependency graph using the PubGrub algorithm.
 ///
-/// This mirrors the signature of [`super::resolve`] so the two resolvers are
+/// This mirrors the signature of [`super::resolve()`] so the two resolvers are
 /// drop-in interchangeable at the call site in `ops::resolve`.
 pub(super) fn resolve(
     summaries: &[(Summary, ResolveOpts)],
