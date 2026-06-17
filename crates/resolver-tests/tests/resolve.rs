@@ -880,7 +880,8 @@ fn resolving_but_no_exists() {
 
     // The PubGrub resolver reports conflicts via its own derivation-tree
     // formatter rather than Cargo's native messages; only assert the outcome.
-    if std::env::var_os("CARGO_TEST_PUBGRUB").is_some() {
+    #[expect(clippy::disallowed_methods, reason = "no GlobalContext in scope")]
+    if std::env::var_os("__CARGO_TEST_PUBGRUB").is_some() {
         return;
     }
 
@@ -1025,7 +1026,8 @@ fn shortest_path_in_error_message() {
     println!("{}", error);
     // The PubGrub resolver formats conflicts differently; only assert that
     // resolution fails (above), not the exact Cargo-native message.
-    if std::env::var_os("CARGO_TEST_PUBGRUB").is_some() {
+    #[expect(clippy::disallowed_methods, reason = "no GlobalContext in scope")]
+    if std::env::var_os("__CARGO_TEST_PUBGRUB").is_some() {
         return;
     }
     assert_data_eq!(
