@@ -136,7 +136,10 @@ fn links_conflict_is_unsat() {
 
 #[test]
 fn missing_dependency_is_unsat() {
-    let reg = registry(vec![pkg_dep(("a", "1.0.0"), vec![dep_req("b", "^2.0")]), pkg(("b", "1.0.0"))]);
+    let reg = registry(vec![
+        pkg_dep(("a", "1.0.0"), vec![dep_req("b", "^2.0")]),
+        pkg(("b", "1.0.0")),
+    ]);
     check(vec![dep("a")], &reg);
 }
 

@@ -3,9 +3,9 @@ use std::io::IsTerminal;
 use cargo::util::GlobalContext;
 use cargo_util::is_ci;
 
+use cargo::workspace::PackageId;
 use cargo::resolver::Resolve;
 use cargo::resolver::VersionPreferences;
-use cargo::workspace::PackageId;
 use cargo::util::interning::InternedString;
 
 use resolver_tests::{
