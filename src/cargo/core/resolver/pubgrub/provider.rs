@@ -507,6 +507,15 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                 let singleton = SemverPubgrub::singleton(version.clone());
                 for fv in values {
                     match fv {
+                        // A feature that lists itself is a cycle. PubGrub would
+                        // treat the resulting self-dependency as trivially
+                        // satisfiable, so detect it explicitly to match the
+                        // default resolver's `cyclic feature dependency` error.
+                        FeatureValue::Feature(f) if f == feat => {
+                            return Ok(Dependencies::Unavailable(format!(
+                                "cyclic feature dependency: feature `{feat}` depends on itself"
+                            )));
+                        }
                         FeatureValue::Feature(f) => deps_insert(
                             &mut deps,
                             package.with_feature(FeatureNamespace::Feat(*f)),
