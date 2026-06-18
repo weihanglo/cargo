@@ -153,6 +153,9 @@ pub(super) fn into_resolve<T: Registry>(
     let mut cksums = HashMap::new();
     let mut features: HashMap<PackageId, Vec<InternedString>> = HashMap::new();
     let mut replacements = HashMap::new();
+    // Replacement targets (the `to` side of `[replace]`) to fold in as resolved
+    // packages once the registry borrow below is released.
+    let mut replacement_targets: Vec<Summary> = Vec::new();
     {
         let registry = provider.registry();
         for pid in &package_ids {
@@ -160,6 +163,15 @@ pub(super) fn into_resolve<T: Registry>(
             cksums.insert(*pid, summary.checksum().map(|s| s.to_string()));
             if let Some((from, to)) = registry.used_replacement_for(*pid) {
                 replacements.insert(from, to);
+                // Unlike `[patch]`, `[replace]` keeps the replaced package as a
+                // graph node and redirects dependency edges to the replacement
+                // via `Resolve::deps`/`replacement`. The replacement package
+                // must therefore also be a resolved node (with its summary and
+                // checksum) so the package set can find it, mirroring how the
+                // default resolver activates the replacement summary.
+                if let Some(replacement) = registry.replacement_summary(*pid) {
+                    replacement_targets.push(replacement);
+                }
             }
             if let Some(act) = activations.get(pid) {
                 let mut feats: Vec<InternedString> = act.features.iter().copied().collect();
@@ -167,6 +179,14 @@ pub(super) fn into_resolve<T: Registry>(
                 features.insert(*pid, feats);
             }
         }
+    }
+    for replacement in replacement_targets {
+        let to = replacement.package_id();
+        graph.add(to);
+        cksums
+            .entry(to)
+            .or_insert_with(|| replacement.checksum().map(|s| s.to_string()));
+        summaries.entry(to).or_insert(replacement);
     }
 
     let resolve = Resolve::new(
