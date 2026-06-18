@@ -20,12 +20,12 @@ use pubgrub::SelectedDependencies;
 use crate::core::dependency::DepKind;
 use crate::core::resolver::Resolve;
 use crate::core::resolver::ResolveVersion;
-use crate::core::{Dependency, PackageId, Registry, SourceId};
+use crate::core::{Dependency, PackageId, Registry, SourceId, Summary};
 use crate::util::Graph;
 use crate::util::errors::CargoResult;
 use crate::util::interning::{INTERNED_DEFAULT, InternedString};
 
-use super::package::{FeatureNamespace, PubGrubPackage};
+use super::package::{BucketName, FeatureNamespace, PubGrubPackage};
 use super::provider::Provider;
 use super::semver_pubgrub::SemverCompatibility;
 
@@ -46,11 +46,19 @@ pub(super) fn into_resolve<T: Registry>(
     solution: &SelectedDependencies<PubGrubPackage, Version>,
     resolve_version: ResolveVersion,
 ) -> CargoResult<Resolve> {
-    // (name, source) -> selected versions (one per compatibility bucket).
-    let mut selected: HashMap<(InternedString, SourceId), BTreeSet<Version>> = HashMap::new();
+    // (name, source) -> selected packages (one per compatibility bucket). The
+    // key is the *bucket* identity (the source the dependency named), while the
+    // value is the resolved [`PackageId`], whose source may differ when the
+    // package was redirected by `[patch]` (e.g. a `crates-io` dep satisfied by
+    // a path patch). See [`bucket_pid`].
+    let mut selected: HashMap<(InternedString, SourceId), BTreeSet<PackageId>> = HashMap::new();
     // PackageId -> activation facts.
     let mut activations: HashMap<PackageId, Activation> = HashMap::new();
     let mut package_ids: BTreeSet<PackageId> = BTreeSet::new();
+    // Resolved summary per node. Captured here (keyed by the patched
+    // [`PackageId`]) so later passes don't re-query by a source that no longer
+    // matches the queryer's bucket cache.
+    let mut summaries: HashMap<PackageId, Summary> = HashMap::new();
 
     for (pkg, version) in solution.iter() {
         match pkg {
@@ -59,17 +67,18 @@ pub(super) fn into_resolve<T: Registry>(
                 member,
                 all_features: _,
             } => {
-                let pid = PackageId::new(name.name, version.clone(), name.source);
+                let (pid, summary) = bucket_pid(provider, name, version)?;
                 package_ids.insert(pid);
+                summaries.insert(pid, summary);
                 selected
                     .entry((name.name, name.source))
                     .or_default()
-                    .insert(version.clone());
+                    .insert(pid);
                 let act = activations.entry(pid).or_default();
                 act.member |= *member;
             }
             PubGrubPackage::BucketFeatures { name, feature } => {
-                let pid = PackageId::new(name.name, version.clone(), name.source);
+                let (pid, _) = bucket_pid(provider, name, version)?;
                 let act = activations.entry(pid).or_default();
                 match feature {
                     FeatureNamespace::Feat(f) => {
@@ -83,7 +92,7 @@ pub(super) fn into_resolve<T: Registry>(
                 }
             }
             PubGrubPackage::BucketDefaultFeatures { name } => {
-                let pid = PackageId::new(name.name, version.clone(), name.source);
+                let (pid, _) = bucket_pid(provider, name, version)?;
                 activations
                     .entry(pid)
                     .or_default()
@@ -106,8 +115,7 @@ pub(super) fn into_resolve<T: Registry>(
     }
 
     for pid in &package_ids {
-        let Some(summary) = provider.summary_for(pid.name(), pid.source_id(), pid.version())?
-        else {
+        let Some(summary) = summaries.get(pid) else {
             anyhow::bail!("pubgrub selected `{pid}` but it has no summary");
         };
         let act = activations.get(pid);
@@ -144,16 +152,12 @@ pub(super) fn into_resolve<T: Registry>(
     // Checksums, features and replacements.
     let mut cksums = HashMap::new();
     let mut features: HashMap<PackageId, Vec<InternedString>> = HashMap::new();
-    let mut summaries = HashMap::new();
     let mut replacements = HashMap::new();
     {
         let registry = provider.registry();
         for pid in &package_ids {
-            let summary = provider
-                .summary_for(pid.name(), pid.source_id(), pid.version())?
-                .expect("summary present");
+            let summary = &summaries[pid];
             cksums.insert(*pid, summary.checksum().map(|s| s.to_string()));
-            summaries.insert(*pid, summary);
             if let Some((from, to)) = registry.used_replacement_for(*pid) {
                 replacements.insert(from, to);
             }
@@ -182,12 +186,16 @@ pub(super) fn into_resolve<T: Registry>(
 }
 
 /// Find the resolved child [`PackageId`] that satisfies `dep` from `parent`.
+///
+/// The lookup is keyed by the *bucket* `(name, source)` the dependency named,
+/// but the returned [`PackageId`] is the one actually selected for that bucket,
+/// whose source may differ when the dependency was redirected by `[patch]`.
 fn resolve_child<T: Registry>(
     provider: &Provider<'_, T>,
     dep: &Dependency,
     parent: &PackageId,
     solution: &SelectedDependencies<PubGrubPackage, Version>,
-    selected: &HashMap<(InternedString, SourceId), BTreeSet<Version>>,
+    selected: &HashMap<(InternedString, SourceId), BTreeSet<PackageId>>,
 ) -> Option<PackageId> {
     let (cray, _) = provider.from_dep(dep, parent.name(), parent.version());
     let (name, source, compat) = match cray {
@@ -199,9 +207,32 @@ fn resolve_child<T: Registry>(
         }
         _ => return None,
     };
-    let versions = selected.get(&(name, source))?;
-    versions
-        .iter()
-        .find(|v| SemverCompatibility::from(*v) == compat)
-        .map(|v| PackageId::new(name, v.clone(), source))
+    let pids = selected.get(&(name, source))?;
+    pids.iter()
+        .find(|pid| SemverCompatibility::from(pid.version()) == compat)
+        .copied()
+}
+
+/// Resolve a [`BucketName`] + version to the selected package and its summary.
+///
+/// The bucket names a `(crate, source)`, but `[patch]` can redirect a query to a
+/// summary from a *different* source (e.g. a `crates-io` requirement satisfied
+/// by a path patch). [`Provider::summary_for`] returns that real summary; we use
+/// its [`PackageId`] — carrying the patched source — as the node identity, so
+/// the lockfile records the package the patch actually provided rather than the
+/// nominal registry source.
+fn bucket_pid<T: Registry>(
+    provider: &Provider<'_, T>,
+    name: &BucketName,
+    version: &Version,
+) -> CargoResult<(PackageId, Summary)> {
+    let Some(summary) = provider.summary_for(name.name, name.source, version)? else {
+        anyhow::bail!(
+            "pubgrub selected `{} {}` from `{}` but it has no summary",
+            name.name,
+            version,
+            name.source
+        );
+    };
+    Ok((summary.package_id(), summary))
 }
