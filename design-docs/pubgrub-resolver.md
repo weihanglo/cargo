@@ -178,7 +178,8 @@ nix develop ~/dev/dotfiles#cargo --command bash -c '
 | `semver_pubgrub.rs` | `SemverPubgrub`: a `pubgrub::VersionSet` over `semver::Version`. Ported & specialized from the `semver-pubgrub` crate, adapted to published pubgrub 0.4 (`Range`/`VersionSet`). Bug-for-bug compatible with `VersionReq::matches`. Also `SemverCompatibility` (the compat-bucket enum) + `only_one_compatibility_range`, `as_singleton`. |
 | `package.rs` | `PubGrubPackage` — the encoding (see §5). Plus `FeatureNamespace`, `BucketName`, `WideName`, and `OptVersionReq -> SemverPubgrub` conversion. |
 | `provider.rs` | `Provider`: implements `pubgrub::DependencyProvider`. Wraps Cargo's async `RegistryQueryer` with a **blocking** poll loop. `choose_version`, `prioritize`, `get_dependencies` (the big translation from `Summary`/`Dependency`/`FeatureValue` into the encoding). |
-| `solution.rs` | `into_resolve`: projects pubgrub's `SelectedDependencies` back into a Cargo `Resolve` (graph nodes, edges, features, checksums, replacements). Reuses the default resolver's `check_cycles` / `check_duplicate_pkgs_in_lockfile`. |
+| `solution.rs` | `into_resolve`: projects pubgrub's `SelectedDependencies` back into a Cargo `Resolve` (graph nodes, edges, features, checksums, replacements). Reuses the default resolver's `check_cycles` / `check_duplicate_pkgs_in_lockfile`. Handles `[patch]`/`[replace]` node identity (see §6). |
+| `error.rs` | The standalone error-reporting bridge: `report_error` turns a `PubGrubError` into a typed `ResolveError`, reusing the v1 resolver's own renderers for byte-identical text. Defines `UnavailableReason` (the structured `M`). See §8. |
 
 ### 4.3 Data flow
 ```
@@ -281,6 +282,21 @@ These cost real debugging time; do not regress them.
 5. **Always `rm -f Cargo.lock` before a fresh-resolution test.** A present lock
    seeds `version_prefs` and hides bugs.
 
+6. **The reconstructed node identity is the *selected summary's* `PackageId`,
+   not the bucket's.** `[patch]` redirects a query to a summary from a different
+   source, so building the node from the bucket's `(name, source)` records the
+   wrong source ("patch not used" + checksum errors). Use
+   `summary.package_id()`. `[replace]` is the inverse: keep the original as the
+   node but *also* register the replacement target as a resolved node, else
+   `Resolve::deps`' replacement redirection points at a package missing from the
+   set ("couldn't find … in package set").
+
+7. **A feature listing itself is a cycle PubGrub won't catch.**
+   `default = ["default"]` becomes a self-dependency, which the solver treats as
+   trivially satisfiable. Detect `*f == feat` explicitly to match the default
+   resolver's `cyclic feature dependency` error. Mutual cycles (`A → B → A`
+   across distinct features) are *legal* and must still resolve.
+
 ### How I root-caused #3 (technique worth reusing)
 Temporarily instrumented `dep_cache.rs::resolve_features` to print, for a target
 crate (env-gated), `parent`, `opts.features`, and `reqs.deps`. Running the
@@ -315,14 +331,36 @@ been removed; re-add ad hoc if needed.)
   candidates). Not yet covered: the `ops::resolve` glue that constructs the
   preferences from a real `Cargo.lock`, and the registry-side version pinning
   `--precise` applies in addition to the preference.
-- **`[patch]`/`[replace]`** handled only insofar as `RegistryQueryer` applies
-  them; not specifically tested.
-- **Error reporting** is a thin wrapper over pubgrub's `DefaultStringReporter`,
-  not Cargo-native messages. Concretely, the resolver returns a generic
-  `anyhow` error rather than a typed `ResolveError`, which the full-testsuite
-  survey (§12) caught via `member_errors::member_manifest_version_error`
-  ("Not a ResolveError"). The resolution itself is correct; only the error
-  type/text differs.
+- **`[patch]`/`[replace]`** — now handled in `solution.rs`. `[patch]` uses the
+  selected summary's real `PackageId` (carrying the patched source) as the node
+  identity; `[replace]` registers the replacement target as a resolved node
+  (graph + summary + checksum), mirroring the default resolver's activation of
+  the replacement summary. Brought `patch::` 43→25 and `replace::` 20→9 under
+  `__CARGO_TEST_PUBGRUB`. Remaining `patch::` failures are a *spurious
+  `[UPDATING]` index refresh* (the non-locked wildcard query defeats the
+  locked-patch short-circuit in `PackageRegistry::query`), not misresolution.
+- **Error reporting** — a standalone bridge now lives in `pubgrub/error.rs`
+  (the only place that formats resolver errors). It returns a typed
+  `ResolveError` and reuses the v1 resolver's own renderers for byte-identical
+  text, via three extracted helpers in `errors.rs`:
+  - `RequirementError::into_activate_error(None, …)` — root/CLI
+    missing/cyclic-feature and missing-dependency errors;
+  - `no_candidates_error` — the "no matching package / version / yanked / typo"
+    family (the trigger recovers the failing `Dependency` and checks whether
+    *any* candidate matches its req, so both absent-crate and wrong-version
+    cases route here);
+  - `version_conflict_error` — the "candidates exist but conflict" family, used
+    so far for a dependency requesting a feature its target lacks (the bridge
+    reuses `into_activate_error(Some(parent), …)` to get Cargo's own
+    `ConflictReason`).
+
+  PubGrub's custom incompatibility metadata `M` is a structured
+  `UnavailableReason`, not a string, so the provider never bakes prose.
+  **Still falling back** to pubgrub's `DefaultStringReporter` (wrapped as
+  `ResolveError`): *semver* and *links* conflicts (deliberately not bridged —
+  their text needs the full multi-hop dependency path the derivation tree
+  doesn't preserve; see §9.6), and the offline-mode hint (the provider carries
+  no `GlobalContext`).
 - **Performance** is not tuned: blocking poll loop in `Provider::candidates`, no
   reuse of the provider across Cargo's two resolve passes, `RefCell` caches.
 - **`Wide` packages** (multi-bucket requirements) are implemented but lightly
@@ -361,20 +399,57 @@ been removed; re-add ad hoc if needed.)
 5. **Weak-dep + feature-map fidelity** — stress more `dep?/feat` shapes and
    confirm the `Resolve.features` map matches the default resolver, not just the
    lockfile graph.
-6. **Cargo-native error reporting** from the derivation tree (only after
-   correctness is locked down).
-7. **Performance** — defer until correctness is solid.
+6. **Cargo-native error reporting** — *partially done; remainder deliberately
+   deferred.* The standalone `pubgrub/error.rs` bridge (see §8) covers the
+   missing/cyclic-feature, missing-dependency, no-candidates (incl.
+   wrong-version), and dependency-requested-feature-conflict families with
+   byte-identical text via the v1 renderers.
+
+   **Not pursued (by design):** the *semver* ("all possible versions conflict")
+   and *links* conflict families — 7 tests total. Their expected text embeds the
+   **full multi-hop dependency chain** of both the failing package *and* the
+   competing already-selected package (e.g. `foo → qux → bad` vs `foo → baz →
+   bad`, each edge with its exact `Dependency`). The default resolver has this
+   from `ResolverContext::parents` (the real resolution graph); PubGrub's
+   derivation tree records *incompatibilities*, not that path, so reconstructing
+   it would be guesswork tuned to one observed tree shape — i.e. overfitting on
+   the smallest remaining bucket. The right fix is architectural: thread the
+   actual resolution path through, or design PubGrub-native reporting; not a
+   tree-shape bridge. Until then these fall back to `DefaultStringReporter`.
+
+   Also still falling back: the offline-mode hint (the provider carries no
+   `GlobalContext`).
+7. **Spurious `[UPDATING]` index refresh.** The provider always queries with a
+   non-locked wildcard `Dependency`, defeating the `patches.len() == 1 &&
+   dep.is_locked()` short-circuit in `PackageRegistry::query`. This makes
+   `cargo` print an extra `[UPDATING]`/download line vs. the default resolver —
+   the bulk of the remaining `patch::` testsuite failures. Resolution is
+   correct; only the index-access side effect differs.
+8. **Performance** — defer until correctness is solid.
 
 ---
 
 ## 10. Commit history (this branch)
 
-Newest first. Implementation: `9fa0e7f75`–`913116cbb`; fixes: `eb917c1f7`,
+Newest first. Implementation: `9fa0e7f75`–`913116cbb`; correctness &
+error-reporting work: `8672b1ee`–`cef37a10`; earlier fixes: `eb917c1f7`,
 `c83889704`→`c916af4f5`; tests: `6d49e8644`, `1f17605b3`, `0864cb574`,
 `7d24add22`, `87e953f7b`–`22a51e300`; observability: `37fa77459`; docs:
 `cacdd97e9`, `6de3fd5be`, `68fb458d9`, `ee05f2fbb`, and this update.
 
 ```
+cef37a10 feat(resolver): Bridge dependency-requested feature conflicts
+b93b27d9 refactor(resolver)!: Extract version_conflict_error from activation_error
+3f8a2eec feat(resolver): Bridge wrong-version errors to Cargo-native text
+81289426 feat(resolver): Bridge no-candidates errors to Cargo-native text
+72b65b23 refactor(resolver)!: Extract no_candidates_error from activation_error
+5aba275a feat(resolver): Add Cargo-native error-reporting bridge for pubgrub
+57c797dd refactor(resolver): Expose RequirementError for reuse by pubgrub
+b8995f1c fix(resolver): Detect self-referential feature cycles in pubgrub
+8c71cf85 fix(resolver): Register [replace] targets as nodes in pubgrub lockfile
+8672b1ee fix(resolver): Track patched source in pubgrub lockfile reconstruction
+f0891f17 docs(resolver): Fix broken intra-doc links in the pubgrub module
+cd65cafa fix(resolver): Read __CARGO_TEST_PUBGRUB via GlobalContext, not std::env
 22a51e300 test(resolver): Add CARGO_TEST_PUBGRUB escape hatch at the dispatch fork
 8e8a44a26 test(resolver): Add conservative-update property test for pubgrub
 592a1a47e test(resolver): Add conservative-update differential tests for pubgrub
@@ -418,38 +493,51 @@ bc8028b86 feat(resolver): Add PubGrubPackage encoding for the pubgrub resolver
 
 ## 12. Full-testsuite survey under PubGrub
 
-First run of the entire integration testsuite through PubGrub, via the
-`__CARGO_TEST_PUBGRUB` dispatch hook (§3):
+Run the entire integration testsuite through PubGrub via the dispatch hook
+(§3). Run under **nightly** so the ~376 nightly-gated tests are un-ignored:
 
 ```sh
-__CARGO_TEST_PUBGRUB=1 cargo test -p cargo --test testsuite
+RUSTUP_TOOLCHAIN=nightly __CARGO_TEST_PUBGRUB=1 cargo +nightly test -p cargo --test testsuite
 ```
 
-Result (this environment, against this branch):
-**3872 passed, 4 failed, 404 ignored.**
+> ⚠️ **Methodology note.** The env var must match the dispatch hook exactly
+> (`__CARGO_TEST_PUBGRUB`, two leading underscores). An earlier survey used the
+> wrong name and so silently ran the *default* resolver, producing a bogus
+> "3872 passed, 4 failed". Always confirm the pubgrub path actually ran (e.g.
+> a known error-text test should fail) before trusting a survey number.
 
-Cross-checking the 4 failures against the **default** resolver (same filter, no
-env var) shows **3 are pre-existing / environment**, not PubGrub regressions:
+Results in this environment (nightly), tracking the correctness/error-reporting
+work in §10:
 
-| Test | Default resolver | Cause |
-|---|---|---|
-| `artifact_dep::artifact_dep_target_does_not_propagate_to_proc_macro` | also FAILS | needs the `i686-unknown-linux-gnu` cross target (not installed here) |
-| `install::failed_install_retains_temp_directory` | also FAILS | `assertion failed: path.exists()` — env/temp-dir, unrelated to resolution |
-| `cargo::z_help::case` | also FAILS | `-Z` help SVG snapshot; the only real delta is our own `-Z pubgrub-resolver` line being added |
+| Survey | passed | failed | ignored |
+|---|---|---|---|
+| Before this work (baseline) | 4019 | 233 | 28 |
+| After `[patch]`/`[replace]`/cyclic + error bridge | ~4075 | ~177 | 28 |
+| After wrong-version (`alt_versions`) bridge | ~4088 | ~164 | 28 |
+| After dependency-requested feature-conflict bridge | ~4094 | **~158** | 28 |
 
-The **one genuinely PubGrub-specific failure**:
+The failed count wobbles by ~1 between runs (≈158–159); the delta is entirely
+in env-flaky tests (`artifact_dep::*` cross-compile, an `update::*` timing
+case), **not** the resolver — diffing two runs shows only those swap in/out.
 
-- `member_errors::member_manifest_version_error` — passes on the default
-  resolver, fails under PubGrub with *"Not a ResolveError"*. The test downcasts
-  the resolution error to a typed `ResolveError`; the PubGrub path instead
-  returns a generic `anyhow` error formatted by `DefaultStringReporter`. This is
-  the **error-reporting** limitation (§8, §9.6), **not** a wrong resolution —
-  the resolver correctly detects the unsatisfiable `i-dont-exist` requirement,
-  it just reports it with the wrong error *type*.
+Per-module failure drops (baseline → now): `registry` 36→12, `replace` 20→9,
+`package_features` 9→3, `features` 9→3, `package` 4→0, plus `member_errors`,
+`generate_lockfile`, `source_replacement`, `features_namespaced` → 0, and
+smaller drops across `build`/`directory`/`install`/`path`/`publish`/`update`.
+(`patch` stays ~24 — those are the spurious-`[UPDATING]` issue, §9.7.)
 
-Takeaway: at the resolution level, PubGrub clears essentially the entire
-integration testsuite. The remaining gap surfaced by this survey is
-Cargo-native error reporting (typed `ResolveError` + message text), which §9.6
-already tracks. A useful next step is a curated allowlist of testsuite modules
-known-green under PubGrub for CI, excluding the error-text/snapshot cases until
-reporting lands.
+The remaining ~158 failures are dominated by these known, non-correctness
+causes:
+
+1. **Spurious `[UPDATING]` index refresh** (§9.7) — bulk of `patch::`, and a
+   chunk of `registry`/`offline`/`git`.
+2. **Remaining conflict-family error text** (§8, §9.6) — the *semver* ("all
+   possible versions conflict") and *links* conflicts. These need recovering
+   *which already-selected package* conflicts from the derivation tree, which is
+   fragile, so they still fall back. (The missing-feature conflict family is now
+   byte-matched.)
+3. **`metadata`/`build_script`/auth modules** — a mix of output-shape diffs and
+   env-gated cases not yet individually triaged.
+
+Both are output/formatting, not misresolution. The 28 still-ignored are
+genuinely unavailable (network/container/`hg`/manual-only), not nightly-gated.
