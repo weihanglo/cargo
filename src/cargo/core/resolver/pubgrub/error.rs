@@ -22,8 +22,9 @@ use pubgrub::{DefaultStringReporter, DerivationTree, External, PubGrubError, Rep
 
 use crate::core::resolver::dep_cache::RequirementError;
 use crate::core::resolver::errors::{
-    ActivateError, ResolveError, describe_path, no_candidates_error,
+    ActivateError, ResolveError, describe_path, no_candidates_error, version_conflict_error,
 };
+use crate::core::resolver::types::ConflictMap;
 use crate::core::{Dependency, Registry};
 
 use super::package::PubGrubPackage;
@@ -72,6 +73,12 @@ pub(super) fn report_error<T: Registry>(
         PubGrubError::NoSolution(mut derivation_tree) => {
             derivation_tree.collapse_no_versions();
             let package_path = package_path(provider, &derivation_tree);
+            // A feature requested by a *dependency* renders as a version
+            // conflict ("... depends on X with feature Y but ..."); check this
+            // before the root-level `native_error` form.
+            if let Some(err) = feature_conflict_native(provider, &derivation_tree) {
+                return err.into();
+            }
             if let Some(err) = native_error(provider, &derivation_tree, &package_path) {
                 return err.into();
             }
@@ -115,6 +122,116 @@ fn native_error<T: Registry>(
         // The `parent: None` arms of `into_activate_error` only ever produce
         // `Fatal`, so a `Conflict` here means our assumption broke; fall back.
         ActivateError::Conflict(..) => None,
+    }
+}
+
+/// Render a "package depends on X with feature Y but X does not have that
+/// feature" conflict, when the missing feature was requested by a *dependency*
+/// (rather than the root/CLI, which [`native_error`] handles).
+///
+/// Reuses `RequirementError::into_activate_error(Some(parent), …)` to obtain the
+/// exact `ConflictReason` Cargo would (distinguishing missing / required-dep /
+/// `dep:`-syntax), then delegates to [`version_conflict_error`].
+fn feature_conflict_native<T: Registry>(
+    provider: &Provider<'_, T>,
+    tree: &DerivationTree<PubGrubPackage, SemverPubgrub, UnavailableReason>,
+) -> Option<ResolveError> {
+    // The failing leaf: a feature of `child` is unavailable; its parent is the
+    // crate that requested that feature.
+    let (parent, child, req) = feature_requirement_edge(tree)?;
+    let parent_name = parent.base_name()?;
+    let parent_summary = provider.any_summary(parent_name.name, parent_name.source)?;
+    let child_name = child.base_name()?;
+    let child_summary = provider.any_summary(child_name.name, child_name.source)?;
+
+    // Only the *feature* requirement errors render as this conflict; a cyclic
+    // self-feature is a different (root-level) message.
+    if matches!(req, RequirementError::Cycle(_)) {
+        return None;
+    }
+
+    // The dependency edge from parent to child, for the "required by" line and
+    // the candidate version list.
+    let dep = parent_summary
+        .dependencies()
+        .iter()
+        .find(|d| d.package_name() == child_name.name && d.source_id() == child_name.source)?
+        .clone();
+    let candidates = provider.matching_summaries(&dep)?;
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let parent_id = parent_summary.package_id();
+    // Reuse Cargo's own reason classification (optional vs required vs `dep:`).
+    let reason = match req
+        .clone()
+        .into_activate_error(Some(parent_id), &child_summary)
+    {
+        ActivateError::Conflict(_, reason) => reason,
+        ActivateError::Fatal(_) => return None,
+    };
+    let mut conflicts = ConflictMap::new();
+    conflicts.insert(parent_id, reason);
+
+    let required_by = describe_path(std::iter::once((&parent_id, None)));
+    Some(version_conflict_error(
+        &dep,
+        &candidates,
+        &conflicts,
+        vec![parent_id],
+        &required_by,
+        // The `MissingFeature` family arms do not consult conflict paths
+        // (`p == parent`), so an empty map suffices.
+        &std::collections::HashMap::new(),
+    ))
+}
+
+/// Find a `parent depends on child/feature` edge whose feature requirement
+/// failed, returning the parent package, the child package, and the
+/// requirement error.
+///
+/// The `Custom(child, Requirement(..))` leaf and the
+/// `FromDependencyOf(parent, child)` edge that introduced `child` are generally
+/// at *different* depths in the tree, so each is searched independently and
+/// matched by package identity.
+fn feature_requirement_edge<'a>(
+    tree: &'a DerivationTree<PubGrubPackage, SemverPubgrub, UnavailableReason>,
+) -> Option<(&'a PubGrubPackage, &'a PubGrubPackage, &'a RequirementError)> {
+    let (child, req) = find_custom_requirement(tree)?;
+    let parent = find_dependency_parent(tree, child)?;
+    Some((parent, child, req))
+}
+
+/// Find the first `Custom(pkg, _, Requirement(req))` leaf anywhere in the tree.
+fn find_custom_requirement<'a>(
+    tree: &'a DerivationTree<PubGrubPackage, SemverPubgrub, UnavailableReason>,
+) -> Option<(&'a PubGrubPackage, &'a RequirementError)> {
+    match tree {
+        DerivationTree::External(External::Custom(pkg, _, UnavailableReason::Requirement(req))) => {
+            Some((pkg, req))
+        }
+        DerivationTree::Derived(derived) => find_custom_requirement(&derived.cause1)
+            .or_else(|| find_custom_requirement(&derived.cause2)),
+        _ => None,
+    }
+}
+
+/// Find the parent of `child` via a `FromDependencyOf(parent, _, child, _)`
+/// external anywhere in the tree.
+fn find_dependency_parent<'a>(
+    tree: &'a DerivationTree<PubGrubPackage, SemverPubgrub, UnavailableReason>,
+    child: &PubGrubPackage,
+) -> Option<&'a PubGrubPackage> {
+    match tree {
+        DerivationTree::External(External::FromDependencyOf(parent, _, dep_child, _))
+            if dep_child == child =>
+        {
+            Some(parent)
+        }
+        DerivationTree::Derived(derived) => find_dependency_parent(&derived.cause1, child)
+            .or_else(|| find_dependency_parent(&derived.cause2, child)),
+        _ => None,
     }
 }
 
