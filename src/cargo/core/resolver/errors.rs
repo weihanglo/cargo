@@ -232,8 +232,46 @@ pub(super) fn activation_error(
         return to_resolve_err(anyhow::format_err!("{}", msg));
     }
 
-    // We didn't actually find any candidates, so we need to
-    // give an error message that nothing was found.
+    // We didn't actually find any candidates, so we need to give an error
+    // message that nothing was found. The body is shared with the PubGrub
+    // resolver's error bridge, which reconstructs the path differently.
+    let required_by = describe_path_in_context(resolver_ctx, &parent.package_id());
+    let package_path = resolver_ctx
+        .parents
+        .path_to_bottom(&parent.package_id())
+        .into_iter()
+        .map(|(node, _)| node)
+        .cloned()
+        .collect();
+    no_candidates_error(
+        registry,
+        dep,
+        version_prefs,
+        package_path,
+        &required_by,
+        gctx,
+    )
+}
+
+/// Build the "no candidates found" resolver error (no version of `dep` exists,
+/// is yanked, has a typo'd name, etc.).
+///
+/// Split out of [`activation_error`] so the PubGrub resolver's error bridge can
+/// reuse the exact same message rendering. The caller supplies the resolved
+/// `package_path` (for [`ResolveError`]) and the pre-rendered `required_by`
+/// dependency-chain description, since the two resolvers recover those
+/// differently. `version_prefs` is used to flag candidates rejected for being
+/// newer than `min-publish-age`.
+pub(in crate::core::resolver) fn no_candidates_error(
+    registry: &impl Registry,
+    dep: &Dependency,
+    version_prefs: &VersionPreferences,
+    package_path: Vec<PackageId>,
+    required_by: &str,
+    gctx: Option<&GlobalContext>,
+) -> ResolveError {
+    let to_resolve_err = |err| ResolveError::new(err, package_path.clone());
+
     let mut msg = String::new();
     let mut hints = String::new();
     // Whether any candidate was rejected for being newer than `min-publish-age`,
@@ -420,11 +458,7 @@ pub(super) fn activation_error(
         location_searched_msg = format!("{}", dep.source_id());
     }
     let _ = writeln!(&mut msg, "location searched: {}", location_searched_msg);
-    let _ = write!(
-        &mut msg,
-        "required by {}",
-        describe_path_in_context(resolver_ctx, &parent.package_id()),
-    );
+    let _ = write!(&mut msg, "required by {}", required_by);
 
     if has_too_new {
         let downgrade_to =
