@@ -24,9 +24,6 @@
 //!
 //! See the individual submodules for the details of each piece.
 
-use pubgrub::PubGrubError;
-use pubgrub::{DefaultStringReporter, Reporter};
-
 use crate::core::resolver::Resolve;
 use crate::core::resolver::ResolveVersion;
 use crate::core::resolver::VersionPreferences;
@@ -38,6 +35,7 @@ use crate::util::context::GlobalContext;
 use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
 
+mod error;
 mod package;
 mod provider;
 mod semver_pubgrub;
@@ -81,7 +79,7 @@ pub(super) fn resolve(
             if let Some(err) = provider.take_error() {
                 return Err(err);
             }
-            Err(report_error(err))
+            Err(error::report_error(&provider, err))
         }
     }
 }
@@ -122,22 +120,5 @@ fn root_from_opts(summary: Summary, opts: &ResolveOpts) -> Root {
         all_features,
         default_features,
         features,
-    }
-}
-
-/// Turn a PubGrub error into a Cargo error.
-///
-/// This is currently a thin wrapper; richer reporting from the derivation tree
-/// is layered on in a later change.
-fn report_error<T: Registry>(err: PubGrubError<Provider<'_, T>>) -> anyhow::Error {
-    match err {
-        PubGrubError::NoSolution(mut derivation_tree) => {
-            derivation_tree.collapse_no_versions();
-            anyhow::anyhow!(
-                "failed to select a version for the requirement\n{}",
-                DefaultStringReporter::report(&derivation_tree)
-            )
-        }
-        other => anyhow::anyhow!("pubgrub resolution failed: {other}"),
     }
 }

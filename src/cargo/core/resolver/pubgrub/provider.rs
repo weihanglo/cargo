@@ -32,11 +32,13 @@ use crate::core::summary::FeatureValue;
 use crate::core::{Dependency, Registry, SourceId, Summary};
 use crate::util::interning::InternedString;
 
+use super::error::UnavailableReason;
 use super::package::{
     BucketName, FeatureNamespace, PubGrubPackage, WideName, opt_version_req_to_pubgrub,
     opt_version_req_to_version_req,
 };
 use super::semver_pubgrub::{SemverCompatibility, SemverPubgrub};
+use crate::core::resolver::dep_cache::RequirementError;
 
 /// The version PubGrub assigns to the synthetic [`PubGrubPackage::Root`].
 pub fn root_version() -> Version {
@@ -181,6 +183,15 @@ impl<'a, T: Registry> Provider<'a, T> {
         Ok(candidates.iter().find(|s| s.version() == version).cloned())
     }
 
+    /// Any candidate summary for `(name, source)`.
+    ///
+    /// Used by the error-reporting bridge, which needs a representative summary
+    /// (for its feature/dependency tables) to render a Cargo-native message; the
+    /// exact version is not significant for those messages.
+    pub(super) fn any_summary(&self, name: InternedString, source: SourceId) -> Option<Summary> {
+        self.candidates(name, source).ok()?.first().cloned()
+    }
+
     /// If every available version matching `dep` lies in a single compatibility
     /// bucket, return it. Used to decide between a plain bucket and a wide
     /// package.
@@ -280,7 +291,7 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
     type P = PubGrubPackage;
     type V = Version;
     type VS = SemverPubgrub;
-    type M = String;
+    type M = UnavailableReason;
     type Err = ProviderError;
     type Priority = (u32, Reverse<u32>);
 
@@ -379,7 +390,7 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
         &self,
         package: &PubGrubPackage,
         version: &Version,
-    ) -> Result<Dependencies<PubGrubPackage, SemverPubgrub, String>, ProviderError> {
+    ) -> Result<Dependencies<PubGrubPackage, SemverPubgrub, UnavailableReason>, ProviderError> {
         let mut deps: HashMap<PubGrubPackage, SemverPubgrub> = HashMap::new();
         match package {
             PubGrubPackage::Root => {
@@ -436,7 +447,7 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                 all_features,
             } => {
                 let Some(summary) = self.summary_for(name.name, name.source, version)? else {
-                    return Ok(Dependencies::Unavailable("no such version".into()));
+                    return Ok(Dependencies::Unavailable(UnavailableReason::NoVersion));
                 };
                 // `links` uniqueness.
                 if let Some(link) = summary.links() {
@@ -490,7 +501,7 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                 feature: FeatureNamespace::Feat(feat),
             } => {
                 let Some(summary) = self.summary_for(name.name, name.source, version)? else {
-                    return Ok(Dependencies::Unavailable("no such version".into()));
+                    return Ok(Dependencies::Unavailable(UnavailableReason::NoVersion));
                 };
                 // A feature implies the crate at this exact version.
                 deps.insert(
@@ -502,7 +513,9 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                     SemverPubgrub::singleton(version.clone()),
                 );
                 let Some(values) = summary.features().get(feat) else {
-                    return Ok(Dependencies::Unavailable(format!("no feature `{feat}`")));
+                    return Ok(Dependencies::Unavailable(UnavailableReason::Requirement(
+                        RequirementError::MissingFeature(*feat),
+                    )));
                 };
                 let singleton = SemverPubgrub::singleton(version.clone());
                 for fv in values {
@@ -512,8 +525,8 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                         // satisfiable, so detect it explicitly to match the
                         // default resolver's `cyclic feature dependency` error.
                         FeatureValue::Feature(f) if f == feat => {
-                            return Ok(Dependencies::Unavailable(format!(
-                                "cyclic feature dependency: feature `{feat}` depends on itself"
+                            return Ok(Dependencies::Unavailable(UnavailableReason::Requirement(
+                                RequirementError::Cycle(*feat),
                             )));
                         }
                         FeatureValue::Feature(f) => deps_insert(
@@ -580,7 +593,7 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                 feature: FeatureNamespace::Dep(dep_name),
             } => {
                 let Some(summary) = self.summary_for(name.name, name.source, version)? else {
-                    return Ok(Dependencies::Unavailable("no such version".into()));
+                    return Ok(Dependencies::Unavailable(UnavailableReason::NoVersion));
                 };
                 deps.insert(
                     PubGrubPackage::Bucket {
@@ -616,15 +629,15 @@ impl<'a, T: Registry> DependencyProvider for Provider<'a, T> {
                 if found {
                     return Ok(Dependencies::Available(deps.into_iter().collect()));
                 } else {
-                    return Ok(Dependencies::Unavailable(format!(
-                        "no optional dependency `{dep_name}`"
+                    return Ok(Dependencies::Unavailable(UnavailableReason::Requirement(
+                        RequirementError::MissingDependency(*dep_name),
                     )));
                 }
             }
 
             PubGrubPackage::BucketDefaultFeatures { name } => {
                 let Some(summary) = self.summary_for(name.name, name.source, version)? else {
-                    return Ok(Dependencies::Unavailable("no such version".into()));
+                    return Ok(Dependencies::Unavailable(UnavailableReason::NoVersion));
                 };
                 deps.insert(
                     PubGrubPackage::Bucket {

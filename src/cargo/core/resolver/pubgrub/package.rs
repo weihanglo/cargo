@@ -148,6 +148,30 @@ impl PubGrubPackage {
         }
     }
 
+    /// The crate `(name, source)` this package refers to, if any.
+    ///
+    /// Returns `None` for the synthetic [`PubGrubPackage::Root`] and
+    /// [`PubGrubPackage::Links`] packages, which have no crate identity. Used by
+    /// the error-reporting bridge to recover the failing package's summary.
+    pub fn base_name(&self) -> Option<BucketName> {
+        match self {
+            PubGrubPackage::Bucket { name, .. }
+            | PubGrubPackage::BucketFeatures { name, .. }
+            | PubGrubPackage::BucketDefaultFeatures { name } => Some(name.clone()),
+            PubGrubPackage::Wide { name }
+            | PubGrubPackage::WideFeatures { name, .. }
+            | PubGrubPackage::WideDefaultFeatures { name } => Some(BucketName {
+                name: name.name,
+                source: name.source,
+                // The wide package has not yet committed to a compat bucket;
+                // the value is unused by the error bridge (it only needs
+                // `name`/`source`).
+                compat: SemverCompatibility::Patch(0),
+            }),
+            PubGrubPackage::Root | PubGrubPackage::Links { .. } => None,
+        }
+    }
+
     /// The same bucket package, with the given feature enabled.
     pub fn with_feature(&self, feature: FeatureNamespace) -> Self {
         match self {
