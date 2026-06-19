@@ -198,6 +198,23 @@ impl<'a, T: Registry> Provider<'a, T> {
         self.candidates(name, source).ok()?.first().cloned()
     }
 
+    /// Candidate summaries that satisfy `dep`'s version requirement.
+    ///
+    /// Used by the error-reporting bridge to tell "no version matches the
+    /// requirement" (render a "no candidates" error) apart from "a version
+    /// matches but conflicts" (a different message it does not yet produce).
+    /// Returns `None` if the crate could not be queried at all.
+    pub(super) fn matching_summaries(&self, dep: &Dependency) -> Option<Vec<Summary>> {
+        let candidates = self.candidates(dep.package_name(), dep.source_id()).ok()?;
+        Some(
+            candidates
+                .iter()
+                .filter(|s| dep.matches(s))
+                .cloned()
+                .collect(),
+        )
+    }
+
     /// If every available version matching `dep` lies in a single compatibility
     /// bucket, return it. Used to decide between a plain bucket and a wide
     /// package.

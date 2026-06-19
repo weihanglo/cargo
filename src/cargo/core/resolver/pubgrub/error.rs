@@ -20,11 +20,11 @@ use std::fmt;
 
 use pubgrub::{DefaultStringReporter, DerivationTree, External, PubGrubError, Reporter};
 
-use crate::core::Registry;
 use crate::core::resolver::dep_cache::RequirementError;
 use crate::core::resolver::errors::{
     ActivateError, ResolveError, describe_path, no_candidates_error,
 };
+use crate::core::{Dependency, Registry};
 
 use super::package::PubGrubPackage;
 use super::provider::Provider;
@@ -129,22 +129,8 @@ fn no_candidates_native<T: Registry>(
     provider: &Provider<'_, T>,
     tree: &DerivationTree<PubGrubPackage, SemverPubgrub, UnavailableReason>,
 ) -> Option<ResolveError> {
-    // Find an edge `parent depends on child` where the child crate has no
-    // candidate versions at all.
-    let (parent, child) = missing_dependency_edge(provider, tree)?;
-    let parent_name = parent.base_name()?;
-    let parent_summary = provider.any_summary(parent_name.name, parent_name.source)?;
-    let child_name = child.base_name()?;
-
-    // Recover the original `Dependency` from the parent's manifest so the
-    // message reports the real version requirement and source.
-    let dep = parent_summary
-        .dependencies()
-        .iter()
-        .find(|d| d.package_name() == child_name.name && d.source_id() == child_name.source)?
-        .clone();
-
-    let parent_id = parent_summary.package_id();
+    // Find a `parent depends on dep` edge where no candidate satisfies `dep`.
+    let (parent_id, dep) = unsatisfiable_dependency(provider, tree)?;
     let required_by = describe_path(std::iter::once((&parent_id, None)));
     let registry = provider.registry();
     Some(no_candidates_error(
@@ -159,22 +145,42 @@ fn no_candidates_native<T: Registry>(
     ))
 }
 
-/// Find a `(parent, child)` package pair where `parent` depends on `child` and
-/// `child` has no candidate versions, i.e. the cause of a "no candidates"
-/// failure.
-fn missing_dependency_edge<'a, T: Registry>(
+/// Find a dependency edge in the tree where the depended-on crate has **no
+/// candidate version satisfying the requirement** — either the crate is absent
+/// entirely or every published version is out of range.
+///
+/// Returns the parent's resolved [`PackageId`] and the original [`Dependency`].
+/// This deliberately excludes the "some candidate matches but conflicts with
+/// another selection" case (handled by the conflict branch, not here), so the
+/// caller only produces the "no candidates" message when it is truly accurate.
+fn unsatisfiable_dependency<T: Registry>(
     provider: &Provider<'_, T>,
-    tree: &'a DerivationTree<PubGrubPackage, SemverPubgrub, UnavailableReason>,
-) -> Option<(&'a PubGrubPackage, &'a PubGrubPackage)> {
+    tree: &DerivationTree<PubGrubPackage, SemverPubgrub, UnavailableReason>,
+) -> Option<(crate::core::PackageId, Dependency)> {
     match tree {
         DerivationTree::External(External::FromDependencyOf(parent, _, child, _)) => {
-            let name = child.base_name()?;
-            // Only a genuine "nothing found" — not a version/feature conflict.
-            let empty = provider.any_summary(name.name, name.source).is_none();
-            empty.then_some((parent, child))
+            let parent_name = parent.base_name()?;
+            let parent_summary = provider.any_summary(parent_name.name, parent_name.source)?;
+            let child_name = child.base_name()?;
+            // Recover the original `Dependency` from the parent's manifest.
+            let dep = parent_summary
+                .dependencies()
+                .iter()
+                .find(|d| {
+                    d.package_name() == child_name.name && d.source_id() == child_name.source
+                })?
+                .clone();
+            // Only claim "no candidates" when nothing actually matches the req.
+            let satisfiable = provider
+                .matching_summaries(&dep)
+                .is_some_and(|summaries| !summaries.is_empty());
+            if satisfiable {
+                return None;
+            }
+            Some((parent_summary.package_id(), dep))
         }
-        DerivationTree::Derived(derived) => missing_dependency_edge(provider, &derived.cause1)
-            .or_else(|| missing_dependency_edge(provider, &derived.cause2)),
+        DerivationTree::Derived(derived) => unsatisfiable_dependency(provider, &derived.cause1)
+            .or_else(|| unsatisfiable_dependency(provider, &derived.cause2)),
         _ => None,
     }
 }
