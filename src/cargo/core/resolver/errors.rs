@@ -82,154 +82,29 @@ pub(super) fn activation_error(
     candidates: &[Summary],
     gctx: Option<&GlobalContext>,
 ) -> ResolveError {
-    let to_resolve_err = |err| {
-        ResolveError::new(
-            err,
-            resolver_ctx
-                .parents
-                .path_to_bottom(&parent.package_id())
-                .into_iter()
-                .map(|(node, _)| node)
-                .cloned()
-                .collect(),
-        )
-    };
-
     if !candidates.is_empty() {
-        let mut msg = format!("failed to select a version for `{}`.", dep.package_name());
-        msg.push_str("\n    ... required by ");
-        msg.push_str(&describe_path_in_context(
-            resolver_ctx,
-            &parent.package_id(),
-        ));
-
-        msg.push_str("\nversions that meet the requirements `");
-        msg.push_str(&dep.version_req().to_string());
-        msg.push_str("` ");
-
-        if let Some(v) = dep.version_req().locked_version() {
-            msg.push_str("(locked to ");
-            msg.push_str(&v.to_string());
-            msg.push_str(") ");
-        }
-
-        msg.push_str("are: ");
-        msg.push_str(
-            &candidates
-                .iter()
-                .map(|v| v.version())
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
+        let package_path = resolver_ctx
+            .parents
+            .path_to_bottom(&parent.package_id())
+            .into_iter()
+            .map(|(node, _)| node)
+            .cloned()
+            .collect();
+        let required_by = describe_path_in_context(resolver_ctx, &parent.package_id());
+        // Pre-render the dependency-chain description for every conflicting
+        // package, since the shared helper has no `ResolverContext`.
+        let conflict_paths = conflicting_activations
+            .keys()
+            .map(|p| (*p, describe_path_in_context(resolver_ctx, p)))
+            .collect();
+        return version_conflict_error(
+            dep,
+            candidates,
+            conflicting_activations,
+            package_path,
+            &required_by,
+            &conflict_paths,
         );
-
-        let mut conflicting_activations: Vec<_> = conflicting_activations.iter().collect();
-        conflicting_activations.sort_unstable();
-        // This is reversed to show the newest versions first. I don't know if there is
-        // a strong reason to do this, but that is how the code previously worked
-        // (see https://github.com/rust-lang/cargo/pull/5037) and I don't feel like changing it.
-        conflicting_activations.reverse();
-        // Flag used for grouping all semver errors together.
-        let mut has_semver = false;
-
-        for (p, r) in &conflicting_activations {
-            match r {
-                ConflictReason::Semver => {
-                    has_semver = true;
-                }
-                ConflictReason::Links(link) => {
-                    msg.push_str("\n\npackage `");
-                    msg.push_str(&*dep.package_name());
-                    msg.push_str("` links to the native library `");
-                    msg.push_str(link);
-                    msg.push_str("`, but it conflicts with a previous package which links to `");
-                    msg.push_str(link);
-                    msg.push_str("` as well:\n");
-                    msg.push_str(&describe_path_in_context(resolver_ctx, p));
-                    msg.push_str("\nnote: only one package in the dependency graph may specify the same links value to ensure that only one copy of a native library is linked in the final binary");
-                    msg.push_str("\nfor more information, see https://doc.rust-lang.org/cargo/reference/resolver.html#links");
-                    msg.push_str("\nhelp: try to adjust your dependencies so that only one package uses the `links = \"");
-                    msg.push_str(link);
-                    msg.push_str("\"` value");
-                }
-                ConflictReason::MissingFeature(feature) => {
-                    msg.push_str("\n\npackage `");
-                    msg.push_str(&*p.name());
-                    msg.push_str("` depends on `");
-                    msg.push_str(&*dep.package_name());
-                    msg.push_str("` with feature `");
-                    msg.push_str(feature);
-                    msg.push_str("` but `");
-                    msg.push_str(&*dep.package_name());
-                    msg.push_str("` does not have that feature.\n");
-                    let latest = candidates.last().expect("in the non-empty branch");
-                    if let Some(closest) = closest(feature, latest.features().keys(), |k| k) {
-                        msg.push_str("help: there is a feature `");
-                        msg.push_str(closest);
-                        msg.push_str("` with a similar name\n");
-                    } else if !latest.features().is_empty() {
-                        let mut features: Vec<_> =
-                            latest.features().keys().map(|f| f.as_str()).collect();
-                        features.sort();
-                        msg.push_str("help: available features: ");
-                        msg.push_str(&features.join(", "));
-                        msg.push_str("\n");
-                    }
-                    // p == parent so the full path is redundant.
-                }
-                ConflictReason::RequiredDependencyAsFeature(feature) => {
-                    msg.push_str("\n\npackage `");
-                    msg.push_str(&*p.name());
-                    msg.push_str("` depends on `");
-                    msg.push_str(&*dep.package_name());
-                    msg.push_str("` with feature `");
-                    msg.push_str(feature);
-                    msg.push_str("` but `");
-                    msg.push_str(&*dep.package_name());
-                    msg.push_str("` does not have that feature.\n");
-                    msg.push_str(
-                        "note: a required dependency with that name exists, \
-                         but only optional dependencies can be used as features.\n",
-                    );
-                    // p == parent so the full path is redundant.
-                }
-                ConflictReason::NonImplicitDependencyAsFeature(feature) => {
-                    msg.push_str("\n\npackage `");
-                    msg.push_str(&*p.name());
-                    msg.push_str("` depends on `");
-                    msg.push_str(&*dep.package_name());
-                    msg.push_str("` with feature `");
-                    msg.push_str(feature);
-                    msg.push_str("` but `");
-                    msg.push_str(&*dep.package_name());
-                    msg.push_str("` does not have that feature.\n");
-                    msg.push_str(
-                        "note: an optional dependency with that name exists, \
-                         but that dependency uses the \"dep:\" \
-                         syntax in the features table, so it does not have an \
-                         implicit feature with that name.\n",
-                    );
-                    // p == parent so the full path is redundant.
-                }
-            }
-        }
-
-        if has_semver {
-            // Group these errors together.
-            msg.push_str("\n\nall possible versions conflict with previously selected packages");
-            for (p, r) in &conflicting_activations {
-                if let ConflictReason::Semver = r {
-                    msg.push_str("\n\n  previously selected ");
-                    msg.push_str(&describe_path_in_context(resolver_ctx, p));
-                }
-            }
-        }
-
-        msg.push_str("\n\nfailed to select a version for `");
-        msg.push_str(&*dep.package_name());
-        msg.push_str("` which could resolve this conflict");
-
-        return to_resolve_err(anyhow::format_err!("{}", msg));
     }
 
     // We didn't actually find any candidates, so we need to give an error
@@ -251,6 +126,163 @@ pub(super) fn activation_error(
         &required_by,
         gctx,
     )
+}
+
+/// Build the "candidates exist but conflict" resolver error: versions of `dep`
+/// were found, but each conflicts with an already-selected package (semver
+/// clash, `links` collision, or a requested feature the dependency lacks).
+///
+/// Split out of [`activation_error`] so the PubGrub resolver's error bridge can
+/// reuse the exact same rendering. The caller supplies the resolved
+/// `package_path` (for [`ResolveError`]), the pre-rendered `required_by`
+/// dependency-chain description for the parent, and `conflict_paths` mapping
+/// each conflicting [`PackageId`] to its rendered chain (used by the `Links`
+/// and `Semver` arms), since the two resolvers recover those differently.
+pub(in crate::core::resolver) fn version_conflict_error(
+    dep: &Dependency,
+    candidates: &[Summary],
+    conflicting_activations: &ConflictMap,
+    package_path: Vec<PackageId>,
+    required_by: &str,
+    conflict_paths: &std::collections::HashMap<PackageId, String>,
+) -> ResolveError {
+    let to_resolve_err = |err| ResolveError::new(err, package_path.clone());
+
+    let mut msg = format!("failed to select a version for `{}`.", dep.package_name());
+    msg.push_str("\n    ... required by ");
+    msg.push_str(required_by);
+
+    msg.push_str("\nversions that meet the requirements `");
+    msg.push_str(&dep.version_req().to_string());
+    msg.push_str("` ");
+
+    if let Some(v) = dep.version_req().locked_version() {
+        msg.push_str("(locked to ");
+        msg.push_str(&v.to_string());
+        msg.push_str(") ");
+    }
+
+    msg.push_str("are: ");
+    msg.push_str(
+        &candidates
+            .iter()
+            .map(|v| v.version())
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+
+    let mut conflicting_activations: Vec<_> = conflicting_activations.iter().collect();
+    conflicting_activations.sort_unstable();
+    // This is reversed to show the newest versions first. I don't know if there is
+    // a strong reason to do this, but that is how the code previously worked
+    // (see https://github.com/rust-lang/cargo/pull/5037) and I don't feel like changing it.
+    conflicting_activations.reverse();
+    // Flag used for grouping all semver errors together.
+    let mut has_semver = false;
+
+    for (p, r) in &conflicting_activations {
+        match r {
+            ConflictReason::Semver => {
+                has_semver = true;
+            }
+            ConflictReason::Links(link) => {
+                msg.push_str("\n\npackage `");
+                msg.push_str(&*dep.package_name());
+                msg.push_str("` links to the native library `");
+                msg.push_str(link);
+                msg.push_str("`, but it conflicts with a previous package which links to `");
+                msg.push_str(link);
+                msg.push_str("` as well:\n");
+                if let Some(path) = conflict_paths.get(p) {
+                    msg.push_str(path);
+                }
+                msg.push_str("\nnote: only one package in the dependency graph may specify the same links value to ensure that only one copy of a native library is linked in the final binary");
+                msg.push_str("\nfor more information, see https://doc.rust-lang.org/cargo/reference/resolver.html#links");
+                msg.push_str("\nhelp: try to adjust your dependencies so that only one package uses the `links = \"");
+                msg.push_str(link);
+                msg.push_str("\"` value");
+            }
+            ConflictReason::MissingFeature(feature) => {
+                msg.push_str("\n\npackage `");
+                msg.push_str(&*p.name());
+                msg.push_str("` depends on `");
+                msg.push_str(&*dep.package_name());
+                msg.push_str("` with feature `");
+                msg.push_str(feature);
+                msg.push_str("` but `");
+                msg.push_str(&*dep.package_name());
+                msg.push_str("` does not have that feature.\n");
+                let latest = candidates.last().expect("in the non-empty branch");
+                if let Some(closest) = closest(feature, latest.features().keys(), |k| k) {
+                    msg.push_str("help: there is a feature `");
+                    msg.push_str(closest);
+                    msg.push_str("` with a similar name\n");
+                } else if !latest.features().is_empty() {
+                    let mut features: Vec<_> =
+                        latest.features().keys().map(|f| f.as_str()).collect();
+                    features.sort();
+                    msg.push_str("help: available features: ");
+                    msg.push_str(&features.join(", "));
+                    msg.push_str("\n");
+                }
+                // p == parent so the full path is redundant.
+            }
+            ConflictReason::RequiredDependencyAsFeature(feature) => {
+                msg.push_str("\n\npackage `");
+                msg.push_str(&*p.name());
+                msg.push_str("` depends on `");
+                msg.push_str(&*dep.package_name());
+                msg.push_str("` with feature `");
+                msg.push_str(feature);
+                msg.push_str("` but `");
+                msg.push_str(&*dep.package_name());
+                msg.push_str("` does not have that feature.\n");
+                msg.push_str(
+                    "note: a required dependency with that name exists, \
+                     but only optional dependencies can be used as features.\n",
+                );
+                // p == parent so the full path is redundant.
+            }
+            ConflictReason::NonImplicitDependencyAsFeature(feature) => {
+                msg.push_str("\n\npackage `");
+                msg.push_str(&*p.name());
+                msg.push_str("` depends on `");
+                msg.push_str(&*dep.package_name());
+                msg.push_str("` with feature `");
+                msg.push_str(feature);
+                msg.push_str("` but `");
+                msg.push_str(&*dep.package_name());
+                msg.push_str("` does not have that feature.\n");
+                msg.push_str(
+                    "note: an optional dependency with that name exists, \
+                     but that dependency uses the \"dep:\" \
+                     syntax in the features table, so it does not have an \
+                     implicit feature with that name.\n",
+                );
+                // p == parent so the full path is redundant.
+            }
+        }
+    }
+
+    if has_semver {
+        // Group these errors together.
+        msg.push_str("\n\nall possible versions conflict with previously selected packages");
+        for (p, r) in &conflicting_activations {
+            if let ConflictReason::Semver = r {
+                msg.push_str("\n\n  previously selected ");
+                if let Some(path) = conflict_paths.get(p) {
+                    msg.push_str(path);
+                }
+            }
+        }
+    }
+
+    msg.push_str("\n\nfailed to select a version for `");
+    msg.push_str(&*dep.package_name());
+    msg.push_str("` which could resolve this conflict");
+
+    to_resolve_err(anyhow::format_err!("{}", msg))
 }
 
 /// Build the "no candidates found" resolver error (no version of `dep` exists,
