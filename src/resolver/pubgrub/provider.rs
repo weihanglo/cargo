@@ -122,6 +122,12 @@ impl<'a, T: Registry> Provider<'a, T> {
         self.registry.borrow()
     }
 
+    /// The version preferences in effect, used by the error bridge to flag
+    /// candidates rejected for being too new (`min-publish-age`).
+    pub(super) fn version_prefs(&self) -> &VersionPreferences {
+        self.version_prefs
+    }
+
     /// Stash a real error and return the pubgrub sentinel.
     fn fail(&self, context: impl Into<String>, err: anyhow::Error) -> ProviderError {
         let msg = context.into();
