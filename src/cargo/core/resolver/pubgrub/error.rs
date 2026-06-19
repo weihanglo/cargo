@@ -22,7 +22,9 @@ use pubgrub::{DefaultStringReporter, DerivationTree, External, PubGrubError, Rep
 
 use crate::core::Registry;
 use crate::core::resolver::dep_cache::RequirementError;
-use crate::core::resolver::errors::{ActivateError, ResolveError};
+use crate::core::resolver::errors::{
+    ActivateError, ResolveError, describe_path, no_candidates_error,
+};
 
 use super::package::PubGrubPackage;
 use super::provider::Provider;
@@ -73,6 +75,9 @@ pub(super) fn report_error<T: Registry>(
             if let Some(err) = native_error(provider, &derivation_tree, &package_path) {
                 return err.into();
             }
+            if let Some(err) = no_candidates_native(provider, &derivation_tree) {
+                return err.into();
+            }
             // Fallback: PubGrub's own rendering, still surfaced as a
             // `ResolveError` so callers that downcast keep working.
             ResolveError::new(
@@ -110,6 +115,67 @@ fn native_error<T: Registry>(
         // The `parent: None` arms of `into_activate_error` only ever produce
         // `Fatal`, so a `Conflict` here means our assumption broke; fall back.
         ActivateError::Conflict(..) => None,
+    }
+}
+
+/// Render the "no candidates found" family (no matching package / version /
+/// yanked / typo) by reconstructing the failing dependency and its parent from
+/// the derivation tree, then delegating to the v1 resolver's
+/// [`no_candidates_error`] for byte-identical text.
+///
+/// Returns `None` if the tree is not a recognizable "parent depends on a
+/// missing child" shape, so the caller can fall back to PubGrub's reporter.
+fn no_candidates_native<T: Registry>(
+    provider: &Provider<'_, T>,
+    tree: &DerivationTree<PubGrubPackage, SemverPubgrub, UnavailableReason>,
+) -> Option<ResolveError> {
+    // Find an edge `parent depends on child` where the child crate has no
+    // candidate versions at all.
+    let (parent, child) = missing_dependency_edge(provider, tree)?;
+    let parent_name = parent.base_name()?;
+    let parent_summary = provider.any_summary(parent_name.name, parent_name.source)?;
+    let child_name = child.base_name()?;
+
+    // Recover the original `Dependency` from the parent's manifest so the
+    // message reports the real version requirement and source.
+    let dep = parent_summary
+        .dependencies()
+        .iter()
+        .find(|d| d.package_name() == child_name.name && d.source_id() == child_name.source)?
+        .clone();
+
+    let parent_id = parent_summary.package_id();
+    let required_by = describe_path(std::iter::once((&parent_id, None)));
+    let registry = provider.registry();
+    Some(no_candidates_error(
+        registry.registry(),
+        &dep,
+        provider.version_prefs(),
+        vec![parent_id],
+        &required_by,
+        // The provider does not carry a `GlobalContext`, so the offline-mode
+        // hint is omitted; it only adds an advisory note.
+        None,
+    ))
+}
+
+/// Find a `(parent, child)` package pair where `parent` depends on `child` and
+/// `child` has no candidate versions, i.e. the cause of a "no candidates"
+/// failure.
+fn missing_dependency_edge<'a, T: Registry>(
+    provider: &Provider<'_, T>,
+    tree: &'a DerivationTree<PubGrubPackage, SemverPubgrub, UnavailableReason>,
+) -> Option<(&'a PubGrubPackage, &'a PubGrubPackage)> {
+    match tree {
+        DerivationTree::External(External::FromDependencyOf(parent, _, child, _)) => {
+            let name = child.base_name()?;
+            // Only a genuine "nothing found" — not a version/feature conflict.
+            let empty = provider.any_summary(name.name, name.source).is_none();
+            empty.then_some((parent, child))
+        }
+        DerivationTree::Derived(derived) => missing_dependency_edge(provider, &derived.cause1)
+            .or_else(|| missing_dependency_edge(provider, &derived.cause2)),
+        _ => None,
     }
 }
 
