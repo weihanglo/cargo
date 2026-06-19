@@ -477,7 +477,12 @@ struct Requirements<'a> {
 ///
 /// This will later be converted to an `ActivateError` depending on whether or
 /// not this is a dependency or a root package.
-enum RequirementError {
+///
+/// Exposed to the `pubgrub` resolver so its error-reporting bridge can reuse
+/// [`RequirementError::into_activate_error`] verbatim, keeping the two
+/// resolvers' messages byte-identical.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::core::resolver) enum RequirementError {
     /// The package does not have the requested feature.
     MissingFeature(InternedString),
     /// The package does not have the requested dependency.
@@ -571,8 +576,25 @@ impl Requirements<'_> {
     }
 }
 
+impl std::fmt::Display for RequirementError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequirementError::MissingFeature(feat) => write!(f, "no feature `{feat}`"),
+            RequirementError::MissingDependency(dep) => write!(f, "no dependency `{dep}`"),
+            RequirementError::Cycle(feat) => write!(
+                f,
+                "cyclic feature dependency: feature `{feat}` depends on itself"
+            ),
+        }
+    }
+}
+
 impl RequirementError {
-    fn into_activate_error(self, parent: Option<PackageId>, summary: &Summary) -> ActivateError {
+    pub(in crate::core::resolver) fn into_activate_error(
+        self,
+        parent: Option<PackageId>,
+        summary: &Summary,
+    ) -> ActivateError {
         match self {
             RequirementError::MissingFeature(feat) => {
                 let deps: Vec<_> = summary
