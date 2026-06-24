@@ -32,9 +32,38 @@ use proptest::prelude::*;
 use proptest::sample::Index;
 use proptest::string::string_regex;
 
+/// Builds the [`GlobalContext`] used by the convenience resolve helpers.
+///
+/// When the `__CARGO_TEST_PUBGRUB` environment variable is set, the experimental
+/// `-Zpubgrub-resolver` is enabled, so the entire curated resolver test suite
+/// can be re-run against the PubGrub resolver for differential validation:
+///
+/// ```sh
+/// __CARGO_TEST_PUBGRUB=1 cargo test -p resolver-tests
+/// ```
+pub fn test_global_context() -> GlobalContext {
+    let mut gctx = GlobalContext::default().unwrap();
+    if gctx.get_env_os("__CARGO_TEST_PUBGRUB").is_some() {
+        gctx.nightly_features_allowed = true;
+        gctx.configure(
+            0,
+            false,
+            None,
+            false,
+            false,
+            false,
+            &None,
+            &["pubgrub-resolver".to_string()],
+            &[],
+        )
+        .unwrap();
+    }
+    gctx
+}
+
 pub fn resolve(deps: Vec<Dependency>, registry: &[Summary]) -> CargoResult<Vec<PackageId>> {
     Ok(
-        resolve_with_global_context(deps, registry, &GlobalContext::default().unwrap())?
+        resolve_with_global_context(deps, registry, &test_global_context())?
             .into_iter()
             .map(|(pkg, _)| pkg)
             .collect(),
@@ -60,7 +89,7 @@ pub fn resolve_and_validated_raw(
         deps.clone(),
         registry,
         root_pkg_id,
-        &GlobalContext::default().unwrap(),
+        &test_global_context(),
     );
 
     match resolve {
@@ -129,6 +158,31 @@ pub fn resolve_with_global_context_raw(
     root_pkg_id: PackageId,
     gctx: &GlobalContext,
 ) -> CargoResult<Resolve> {
+    resolve_with_prefs_raw(
+        deps,
+        registry,
+        root_pkg_id,
+        gctx,
+        VersionPreferences::default(),
+    )
+}
+
+/// Like [`resolve_with_global_context_raw`], but lets the caller seed the
+/// [`VersionPreferences`].
+///
+/// This is how the conservative-update paths are exercised offline: an existing
+/// lockfile (and `cargo update -p <crate>`) is modeled by preferring the
+/// previously selected [`PackageId`]s (see [`prefs_from_lock`]), and `--precise`
+/// is modeled by preferring an exact [`Dependency`]. The production glue in
+/// `ops::resolve` builds the same [`VersionPreferences`] before handing off to
+/// the resolver, so this is the faithful resolver-level slice of those flows.
+pub fn resolve_with_prefs_raw(
+    deps: Vec<Dependency>,
+    registry: &[Summary],
+    root_pkg_id: PackageId,
+    gctx: &GlobalContext,
+    mut version_prefs: VersionPreferences,
+) -> CargoResult<Resolve> {
     struct MyRegistry<'a> {
         list: &'a [Summary],
         used: RefCell<HashSet<PackageId>>,
@@ -192,7 +246,6 @@ pub fn resolve_with_global_context_raw(
     let opts = ResolveOpts::everything();
 
     let start = Instant::now();
-    let mut version_prefs = VersionPreferences::default();
     if gctx.cli_unstable().minimal_versions {
         version_prefs.version_ordering(VersionOrdering::MinimumVersionsFirst)
     }
@@ -210,6 +263,26 @@ pub fn resolve_with_global_context_raw(
     // So let's fail the test if we have been running for more than 60 secs.
     assert!(start.elapsed().as_secs() < 60);
     resolve
+}
+
+/// Build [`VersionPreferences`] that reproduce a previous resolution, modeling
+/// an existing `Cargo.lock` (and `cargo update -p <crate>`) at the resolver
+/// level.
+///
+/// Every previously selected package is preferred via
+/// [`VersionPreferences::prefer_package_id`], *except* those whose name is in
+/// `unlock`. Passing an empty `unlock` models building against an untouched lock
+/// (everything kept); passing a single name models `cargo update -p <name>`
+/// (that crate is free to move, the rest are pinned).
+pub fn prefs_from_lock(resolve: &Resolve, unlock: &[&str]) -> VersionPreferences {
+    let mut prefs = VersionPreferences::default();
+    for id in resolve.iter() {
+        if unlock.contains(&id.name().as_str()) {
+            continue;
+        }
+        prefs.prefer_package_id(id);
+    }
+    prefs
 }
 
 /// By default `Summary` and `Dependency` have a very verbose `Debug` representation.

@@ -95,6 +95,8 @@ mod resolve;
 mod types;
 mod version_prefs;
 
+mod pubgrub;
+
 /// Builds the list of all packages required to build the first argument.
 ///
 /// * `summaries` - the list of package summaries along with how to resolve
@@ -130,6 +132,26 @@ pub fn resolve(
     resolve_version: ResolveVersion,
     gctx: Option<&GlobalContext>,
 ) -> CargoResult<Resolve> {
+    // `__CARGO_TEST_PUBGRUB` is a test-only escape hatch that routes every
+    // resolution through the experimental PubGrub resolver, independent of the
+    // `-Zpubgrub-resolver` flag (which requires nightly). It lets the entire
+    // integration testsuite be re-run on PubGrub for differential validation;
+    // it is read here, at the single dispatch fork, so child `cargo` processes
+    // spawned by the testsuite inherit it. It is never set in production.
+    let use_pubgrub = gctx.is_some_and(|gctx| {
+        gctx.cli_unstable().pubgrub_resolver || gctx.get_env_os("__CARGO_TEST_PUBGRUB").is_some()
+    });
+    if use_pubgrub {
+        return pubgrub::resolve(
+            summaries,
+            replacements,
+            registry,
+            version_prefs,
+            resolve_version,
+            gctx,
+        );
+    }
+
     let first_version = match gctx {
         Some(config) if config.cli_unstable().direct_minimal_versions => {
             Some(VersionOrdering::MinimumVersionsFirst)
