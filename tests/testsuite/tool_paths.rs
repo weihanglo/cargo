@@ -783,6 +783,59 @@ running 1 test
 }
 
 #[cargo_test]
+fn target_cfg_linker_proc_macro_with_target() {
+    let target = rustc_host();
+    let p = proc_macro_package();
+    p.change_file(
+        ".cargo/config.toml",
+        r#"
+            [target.'cfg(all())']
+            linker = "/path/to/cfg/linker"
+        "#,
+    );
+
+    p.cargo("build -v --target")
+        .arg(&target)
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[RUNNING] `rustc --crate-name foo [..]--crate-type proc-macro [..]-C linker=[..]/path/to/cfg/linker [..]`
+[ERROR] linker `[..]/path/to/cfg/linker` not found
+...
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn host_linker_proc_macro() {
+    let target = rustc_host();
+    let p = proc_macro_package();
+    p.change_file(
+        ".cargo/config.toml",
+        &format!(
+            r#"
+            [host]
+            linker = "/path/to/host/linker"
+            [target.{target}]
+            linker = "/path/to/target/linker"
+        "#,
+        ),
+    );
+
+    p.cargo("build -v -Ztarget-applies-to-host -Zhost-config --target")
+        .arg(&target)
+        .masquerade_as_nightly_cargo(&["target-applies-to-host", "host-config"])
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[RUNNING] `rustc --crate-name foo [..]--crate-type proc-macro [..]-C linker=[..]/path/to/host/linker [..]`
+[ERROR] linker `[..]/path/to/host/linker` not found
+...
+"#]])
+        .run();
+}
+
+#[cargo_test]
 fn custom_linker_env() {
     let p = project().file("src/main.rs", "fn main() {}").build();
 
