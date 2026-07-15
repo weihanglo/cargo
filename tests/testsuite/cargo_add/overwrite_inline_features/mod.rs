@@ -8,17 +8,7 @@ use cargo_test_support::str;
 #[cargo_test]
 fn case() {
     cargo_test_support::registry::init();
-    for ver in [
-        "0.1.1+my-package",
-        "0.2.0+my-package",
-        "0.2.3+my-package",
-        "0.4.1+my-package",
-        "20.0.0+my-package",
-        "99999.0.0+my-package",
-        "99999.0.0-alpha.1+my-package",
-    ] {
-        cargo_test_support::registry::Package::new("unrelateed-crate", ver).publish();
-    }
+    super::publish_package_versions(&["unrelateed-crate"]);
     cargo_test_support::registry::Package::new("your-face", "99999.0.0+my-package")
         .feature("nose", &[])
         .feature("mouth", &[])

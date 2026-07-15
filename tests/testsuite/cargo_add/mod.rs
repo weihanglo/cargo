@@ -1,3 +1,5 @@
+use cargo_test_support::registry::{Package, PackageBatch};
+
 mod add_basic;
 mod add_multiple;
 mod add_no_vendored_package_with_alter_registry;
@@ -163,3 +165,33 @@ mod workspace_name;
 mod workspace_path;
 mod workspace_path_dev;
 mod yanked;
+
+const PACKAGE_VERSIONS: &[&str] = &[
+    "0.1.1+my-package",
+    "0.2.0+my-package",
+    "0.2.3+my-package",
+    "0.4.1+my-package",
+    "20.0.0+my-package",
+    "99999.0.0+my-package",
+    "99999.0.0-alpha.1+my-package",
+];
+
+fn publish_package_versions(package_names: &[&str]) {
+    publish_package_versions_to(package_names, false);
+}
+
+fn publish_alternative_package_versions(package_names: &[&str]) {
+    publish_package_versions_to(package_names, true);
+}
+
+fn publish_package_versions_to(package_names: &[&str], alternative: bool) {
+    let mut packages = PackageBatch::new();
+    for name in package_names {
+        for version in PACKAGE_VERSIONS {
+            Package::new(*name, *version)
+                .alternative(alternative)
+                .publish_to(&mut packages);
+        }
+    }
+    packages.commit();
+}
