@@ -1,3 +1,5 @@
+use cargo_test_support::registry::PackageBatch;
+
 mod avoid_empty_tables;
 mod build;
 mod dev;
@@ -36,3 +38,9 @@ mod update_lock_file;
 mod workspace;
 mod workspace_non_virtual;
 mod workspace_preserved;
+
+fn publish_packages(prepare: impl FnOnce(&mut PackageBatch)) {
+    let mut packages = PackageBatch::new();
+    prepare(&mut packages);
+    packages.commit();
+}

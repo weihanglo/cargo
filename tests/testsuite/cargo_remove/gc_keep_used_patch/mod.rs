@@ -3,15 +3,18 @@ use cargo_test_support::Project;
 use cargo_test_support::compare::assert_ui;
 use cargo_test_support::current_dir;
 use cargo_test_support::file;
+use cargo_test_support::registry::Package;
 use cargo_test_support::str;
 
 #[cargo_test]
 fn case() {
     cargo_test_support::registry::init();
-    cargo_test_support::registry::Package::new("serde", "1.0.0").publish();
-    cargo_test_support::registry::Package::new("serde_json", "1.0.0")
-        .dep("serde", "1.0.0")
-        .publish();
+    super::publish_packages(|packages| {
+        Package::new("serde", "1.0.0").publish_to(packages);
+        Package::new("serde_json", "1.0.0")
+            .dep("serde", "1.0.0")
+            .publish_to(packages);
+    });
 
     let project = Project::from_template(current_dir!().join("in"));
     let project_root = project.root();

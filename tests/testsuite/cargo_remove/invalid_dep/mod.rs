@@ -3,20 +3,22 @@ use cargo_test_support::Project;
 use cargo_test_support::compare::assert_ui;
 use cargo_test_support::current_dir;
 use cargo_test_support::file;
+use cargo_test_support::registry::Package;
 use cargo_test_support::str;
 
 #[cargo_test]
 fn case() {
     cargo_test_support::registry::init();
-    cargo_test_support::registry::Package::new("invalid-dependency-name", "0.6.2+my-package")
-        .publish();
-    cargo_test_support::registry::Package::new("docopt", "0.6.2+my-package").publish();
-    cargo_test_support::registry::Package::new("semver", "0.1.1")
-        .feature("std", &[])
-        .publish();
-    cargo_test_support::registry::Package::new("serde", "1.0.90")
-        .feature("std", &[])
-        .publish();
+    super::publish_packages(|packages| {
+        Package::new("invalid-dependency-name", "0.6.2+my-package").publish_to(packages);
+        Package::new("docopt", "0.6.2+my-package").publish_to(packages);
+        Package::new("semver", "0.1.1")
+            .feature("std", &[])
+            .publish_to(packages);
+        Package::new("serde", "1.0.90")
+            .feature("std", &[])
+            .publish_to(packages);
+    });
 
     let project = Project::from_template(current_dir!().join("in"));
     let project_root = project.root();
