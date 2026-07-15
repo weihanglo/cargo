@@ -12,7 +12,7 @@ use cargo::core::SourceId;
 use cargo_test_support::assert_deterministic_mtime;
 use cargo_test_support::paths;
 use cargo_test_support::registry::{
-    self, Dependency, Package, RegistryBuilder, Response, TestRegistry, registry_path,
+    self, Dependency, Package, PackageBatch, RegistryBuilder, Response, TestRegistry, registry_path,
 };
 use cargo_test_support::{basic_manifest, project, str};
 use cargo_test_support::{git, t};
@@ -112,30 +112,61 @@ fn registry_head(path: &Path) -> git2::Oid {
         .unwrap()
 }
 
+fn assert_registry_commit(path: &Path, parent: git2::Oid) -> git2::Oid {
+    let repo = git2::Repository::open(path).unwrap();
+    let head = repo.head().unwrap().target().unwrap();
+    let commit = repo.find_commit(head).unwrap();
+    assert_eq!(commit.parent_count(), 1);
+    assert_eq!(commit.parent_id(0).unwrap(), parent);
+    head
+}
+
+fn assert_registry_tree(root: &Path, commit: git2::Oid, present: &[&Path], absent: &[&Path]) {
+    let repo = git2::Repository::open(root).unwrap();
+    let tree = repo.find_commit(commit).unwrap().tree().unwrap();
+    for relative_path in present {
+        let entry = tree
+            .get_path(relative_path)
+            .unwrap_or_else(|_| panic!("{} is missing", relative_path.display()));
+        let blob = repo.find_blob(entry.id()).unwrap();
+        assert_eq!(
+            blob.content(),
+            fs::read(root.join(relative_path)).unwrap(),
+            "{} differs from the working tree",
+            relative_path.display()
+        );
+    }
+    for relative_path in absent {
+        assert!(
+            tree.get_path(relative_path).is_err(),
+            "{} is unexpectedly committed",
+            relative_path.display()
+        );
+    }
+}
+
 #[cargo_test]
 fn package_publish_is_immediate_and_ordered() {
     registry::init();
-    let index_path = registry_path().join("3/f/foo");
+    let registry_path = registry_path();
+    let index_path = registry_path.join("3/f/foo");
     let initial_line = r#"{"name":"foo","vers":"0.1.0","custom":true}"#;
-    let initial_head = registry_head(&registry_path());
+    let initial_head = registry_head(&registry_path);
 
     Package::new("foo", "0.1.0")
         .index_line(initial_line)
         .publish();
-    let first_head = registry_head(&registry_path());
-    assert_ne!(first_head, initial_head);
+    let first_head = assert_registry_commit(&registry_path, initial_head);
     assert_eq!(
         fs::read_to_string(&index_path).unwrap(),
         initial_line.to_owned() + "\n"
     );
 
     let checksum_020 = Package::new("foo", "0.2.0").publish();
-    let second_head = registry_head(&registry_path());
-    assert_ne!(second_head, first_head);
+    let second_head = assert_registry_commit(&registry_path, first_head);
 
     let checksum_030 = Package::new("foo", "0.3.0").publish();
-    let third_head = registry_head(&registry_path());
-    assert_ne!(third_head, second_head);
+    assert_registry_commit(&registry_path, second_head);
 
     let contents = fs::read_to_string(index_path).unwrap();
     let mut lines = contents.lines();
@@ -160,15 +191,13 @@ fn package_publish_respects_registry_destination() {
     let alternative_head = registry_head(&alternative_path);
 
     Package::new("primary-package", "1.0.0").publish();
-    let primary_published_head = registry_head(&primary_path);
-    assert_ne!(primary_published_head, primary_head);
+    let primary_published_head = assert_registry_commit(&primary_path, primary_head);
     assert_eq!(registry_head(&alternative_path), alternative_head);
 
     Package::new("alternative-package", "1.0.0")
         .alternative(true)
         .publish();
-    let alternative_published_head = registry_head(&alternative_path);
-    assert_ne!(alternative_published_head, alternative_head);
+    assert_registry_commit(&alternative_path, alternative_head);
     assert_eq!(registry_head(&primary_path), primary_published_head);
 
     Package::new("local-package", "1.0.0").local(true).publish();
@@ -177,6 +206,247 @@ fn package_publish_respects_registry_destination() {
     assert!(primary_path.join("pr/im/primary-package").is_file());
     assert!(alternative_path.join("al/te/alternative-package").is_file());
     assert!(primary_path.join("index/lo/ca/local-package").is_file());
+}
+
+#[cargo_test]
+fn package_batch_defers_index_updates_and_commits_once() {
+    registry::init();
+    let registry_path = registry_path();
+    let index_path = registry_path.join("3/f/foo");
+    let custom_index_path = registry_path.join("3/b/bar");
+    let initial_line = r#"{"name":"foo","vers":"0.1.0","custom":true}"#;
+    let custom_line = r#"{"name":"bar","vers":"1.0.0","custom":"queued"}"#;
+
+    Package::new("foo", "0.1.0")
+        .index_line(initial_line)
+        .publish();
+    let initial_head = registry_head(&registry_path);
+    let initial_contents = fs::read_to_string(&index_path).unwrap();
+
+    let mut batch = PackageBatch::new();
+    let package_020 = Package::new("foo", "0.2.0");
+    let archive_020 = package_020.archive_dst();
+    let checksum_020 = package_020.publish_to(&mut batch);
+    let package_030 = Package::new("foo", "0.3.0");
+    let archive_030 = package_030.archive_dst();
+    let checksum_030 = package_030.publish_to(&mut batch);
+    let mut custom_package = Package::new("bar", "1.0.0");
+    custom_package.index_line(custom_line);
+    let custom_archive = custom_package.archive_dst();
+    custom_package.publish_to(&mut batch);
+
+    assert!(archive_020.is_file());
+    assert!(archive_030.is_file());
+    assert!(custom_archive.is_file());
+    assert_eq!(fs::read_to_string(&index_path).unwrap(), initial_contents);
+    assert!(!custom_index_path.exists());
+    assert_eq!(registry_head(&registry_path), initial_head);
+
+    batch.commit();
+
+    let committed_head = assert_registry_commit(&registry_path, initial_head);
+    let contents = fs::read_to_string(index_path).unwrap();
+    let mut lines = contents.lines();
+    assert_eq!(lines.next(), Some(initial_line));
+
+    let line_020: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+    assert_eq!(line_020["vers"], "0.2.0");
+    assert_eq!(line_020["cksum"], checksum_020);
+
+    let line_030: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+    assert_eq!(line_030["vers"], "0.3.0");
+    assert_eq!(line_030["cksum"], checksum_030);
+    assert_eq!(lines.next(), None);
+    assert_eq!(
+        fs::read_to_string(custom_index_path).unwrap(),
+        custom_line.to_owned() + "\n"
+    );
+    assert_registry_tree(
+        &registry_path,
+        committed_head,
+        &[Path::new("3/f/foo"), Path::new("3/b/bar")],
+        &[],
+    );
+
+    PackageBatch::new().commit();
+    assert_eq!(registry_head(&registry_path), committed_head);
+}
+
+#[cargo_test]
+fn package_batch_groups_registry_destinations() {
+    registry::alt_init();
+    let primary_path = registry_path();
+    let alternative_path = registry::alt_registry_path();
+    let relative_path = Path::new("ba/tc/batched-package");
+    let primary_index = primary_path.join(relative_path);
+    let alternative_index = alternative_path.join(relative_path);
+    let local_relative_path = Path::new("index").join(relative_path);
+    let local_index = primary_path.join(&local_relative_path);
+    let alternative_local_index = alternative_path.join(&local_relative_path);
+    let primary_head = registry_head(&primary_path);
+    let alternative_head = registry_head(&alternative_path);
+
+    let mut batch = PackageBatch::new();
+    let primary = Package::new("batched-package", "1.0.0");
+    let primary_archive = primary.archive_dst();
+    let primary_checksum = primary.publish_to(&mut batch);
+
+    let mut alternative = Package::new("batched-package", "2.0.0");
+    alternative.alternative(true);
+    let alternative_archive = alternative.archive_dst();
+    let alternative_checksum = alternative.publish_to(&mut batch);
+
+    let mut local = Package::new("batched-package", "3.0.0");
+    local.local(true);
+    let local_archive = local.archive_dst();
+    let local_checksum = local.publish_to(&mut batch);
+
+    let mut alternative_local = Package::new("batched-package", "4.0.0");
+    alternative_local.alternative(true).local(true);
+    let alternative_local_archive = alternative_local.archive_dst();
+    let alternative_local_checksum = alternative_local.publish_to(&mut batch);
+
+    assert!(primary_archive.is_file());
+    assert!(alternative_archive.is_file());
+    assert!(local_archive.is_file());
+    assert!(alternative_local_archive.is_file());
+    assert!(!primary_index.exists());
+    assert!(!alternative_index.exists());
+    assert!(!local_index.exists());
+    assert!(!alternative_local_index.exists());
+    assert_eq!(registry_head(&primary_path), primary_head);
+    assert_eq!(registry_head(&alternative_path), alternative_head);
+
+    batch.commit();
+
+    let primary_committed_head = assert_registry_commit(&primary_path, primary_head);
+    let alternative_committed_head = assert_registry_commit(&alternative_path, alternative_head);
+    let primary_record: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(primary_index).unwrap()).unwrap();
+    let alternative_record: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(alternative_index).unwrap()).unwrap();
+    let local_record: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(local_index).unwrap()).unwrap();
+    let alternative_local_record: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(alternative_local_index).unwrap()).unwrap();
+    assert_eq!(primary_record["vers"], "1.0.0");
+    assert_eq!(primary_record["cksum"], primary_checksum);
+    assert_eq!(alternative_record["vers"], "2.0.0");
+    assert_eq!(alternative_record["cksum"], alternative_checksum);
+    assert_eq!(local_record["vers"], "3.0.0");
+    assert_eq!(local_record["cksum"], local_checksum);
+    assert_eq!(alternative_local_record["vers"], "4.0.0");
+    assert_eq!(
+        alternative_local_record["cksum"],
+        alternative_local_checksum
+    );
+
+    assert_registry_tree(
+        &primary_path,
+        primary_committed_head,
+        &[relative_path],
+        &[&local_relative_path],
+    );
+    assert_registry_tree(
+        &alternative_path,
+        alternative_committed_head,
+        &[relative_path],
+        &[&local_relative_path],
+    );
+
+    let primary_git_index = git2::Repository::open(primary_path)
+        .unwrap()
+        .index()
+        .unwrap();
+    assert!(
+        primary_git_index
+            .get_path(&local_relative_path, 0)
+            .is_none()
+    );
+    let alternative_git_index = git2::Repository::open(alternative_path)
+        .unwrap()
+        .index()
+        .unwrap();
+    assert!(
+        alternative_git_index
+            .get_path(&local_relative_path, 0)
+            .is_none()
+    );
+}
+
+#[cargo_test]
+fn package_batch_local_updates_do_not_commit() {
+    registry::alt_init();
+    let primary_path = registry_path();
+    let alternative_path = registry::alt_registry_path();
+    let primary_head = registry_head(&primary_path);
+    let alternative_head = registry_head(&alternative_path);
+
+    let mut batch = PackageBatch::new();
+    let mut primary = Package::new("primary-local", "1.0.0");
+    primary.local(true).publish_to(&mut batch);
+    let mut alternative = Package::new("alternative-local", "1.0.0");
+    alternative
+        .alternative(true)
+        .local(true)
+        .publish_to(&mut batch);
+    batch.commit();
+
+    assert!(primary_path.join("index/pr/im/primary-local").is_file());
+    assert!(
+        alternative_path
+            .join("index/al/te/alternative-local")
+            .is_file()
+    );
+    assert_eq!(registry_head(&primary_path), primary_head);
+    assert_eq!(registry_head(&alternative_path), alternative_head);
+}
+
+#[cargo_test]
+fn package_batch_drop_discards_index_updates() {
+    registry::init();
+    let registry_path = registry_path();
+    let index_path = registry_path.join("dr/op/dropped-package");
+    let initial_head = registry_head(&registry_path);
+    let package = Package::new("dropped-package", "1.0.0");
+    let archive = package.archive_dst();
+
+    let mut batch = PackageBatch::new();
+    package.publish_to(&mut batch);
+    drop(batch);
+
+    assert!(archive.is_file());
+    assert!(!index_path.exists());
+    assert_eq!(registry_head(&registry_path), initial_head);
+}
+
+#[cargo_test]
+fn package_batch_rejects_staged_registry_changes() {
+    registry::init();
+    let registry_path = registry_path();
+    let initial_head = registry_head(&registry_path);
+    fs::write(registry_path.join("staged"), "unrelated").unwrap();
+    let repo = git2::Repository::open(&registry_path).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("staged")).unwrap();
+    index.write().unwrap();
+
+    let mut batch = PackageBatch::new();
+    let package = Package::new("batched-package", "1.0.0");
+    let archive = package.archive_dst();
+    let index_path = registry_path.join("ba/tc/batched-package");
+    package.publish_to(&mut batch);
+    let error = std::panic::catch_unwind(|| batch.commit()).unwrap_err();
+    let message = error
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| error.downcast_ref::<&str>().copied())
+        .unwrap();
+
+    assert!(message.contains("cannot commit a package batch with staged registry changes"));
+    assert!(archive.is_file());
+    assert!(!index_path.exists());
+    assert_eq!(registry_head(&registry_path), initial_head);
 }
 
 #[cargo_test]
@@ -3814,9 +4084,11 @@ fn sparse_retry_multiple() {
     )
     .unwrap();
     let _server = builder.build();
+    let mut packages = PackageBatch::new();
     for (_, name) in &pkgs {
-        Package::new(name, "1.0.0").publish();
+        Package::new(name, "1.0.0").publish_to(&mut packages);
     }
+    packages.commit();
     let p = project()
         .file("Cargo.toml", &cargo_toml)
         .file("src/lib.rs", "")
@@ -3963,9 +4235,11 @@ fn dl_retry_multiple() {
     )
     .unwrap();
     let _server = builder.build();
+    let mut packages = PackageBatch::new();
     for (_, name) in &pkgs {
-        Package::new(name, "1.0.0").publish();
+        Package::new(name, "1.0.0").publish_to(&mut packages);
     }
+    packages.commit();
     let p = project()
         .file("Cargo.toml", &cargo_toml)
         .file("src/lib.rs", "")

@@ -38,11 +38,11 @@ use crate::compare::InMemoryDir;
 use crate::registry::{self, FeatureMap, alt_api_path};
 use flate2::read::GzDecoder;
 use snapbox::prelude::*;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::fs::File;
 use std::io::{self, SeekFrom, prelude::*};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tar::Archive;
 
 fn read_le_u32<R>(mut reader: R) -> io::Result<u32>
@@ -259,32 +259,130 @@ pub(crate) fn create_index_line(
     json.to_string()
 }
 
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct IndexFile {
+    registry_path: PathBuf,
+    relative_path: String,
+    local: bool,
+}
+
+pub(crate) struct PendingIndexUpdate {
+    index_file: IndexFile,
+    line: String,
+}
+
+impl PendingIndexUpdate {
+    pub(crate) fn new(registry_path: PathBuf, name: &str, line: String, local: bool) -> Self {
+        Self {
+            index_file: IndexFile {
+                registry_path,
+                relative_path: cargo_util::registry::make_dep_path(name, false),
+                local,
+            },
+            line,
+        }
+    }
+}
+
 pub(crate) fn write_to_index(registry_path: &Path, name: &str, line: String, local: bool) {
-    let file = cargo_util::registry::make_dep_path(name, false);
+    write_index_update(PendingIndexUpdate::new(
+        registry_path.to_owned(),
+        name,
+        line,
+        local,
+    ));
+}
 
-    // Write file/line in the index.
-    let dst = if local {
-        registry_path.join("index").join(&file)
-    } else {
-        registry_path.join(&file)
-    };
-    let prev = fs::read_to_string(&dst).unwrap_or_default();
-    t!(fs::create_dir_all(dst.parent().unwrap()));
-    t!(fs::write(&dst, prev + &line[..] + "\n"));
+pub(crate) fn write_index_update(update: PendingIndexUpdate) {
+    write_index_updates_inner([update], false);
+}
 
-    // Add the new file to the index.
-    if !local {
-        let repo = t!(git2::Repository::open(&registry_path));
+pub(crate) fn write_index_updates(updates: impl IntoIterator<Item = PendingIndexUpdate>) {
+    write_index_updates_inner(updates, true);
+}
+
+fn write_index_updates_inner(
+    updates: impl IntoIterator<Item = PendingIndexUpdate>,
+    reject_staged_changes: bool,
+) {
+    let mut index_files = BTreeMap::<IndexFile, Vec<String>>::new();
+    for update in updates {
+        index_files
+            .entry(update.index_file)
+            .or_default()
+            .push(update.line);
+    }
+
+    let mut repositories = BTreeMap::<PathBuf, git2::Repository>::new();
+    if reject_staged_changes {
+        for index_file in index_files.keys().filter(|index_file| !index_file.local) {
+            if repositories.contains_key(&index_file.registry_path) {
+                continue;
+            }
+            let repo = t!(git2::Repository::open(&index_file.registry_path));
+            {
+                let mut index = t!(repo.index());
+                let parent = t!(repo.refname_to_id("refs/heads/master"));
+                let parent = t!(repo.find_commit(parent));
+                let staged_tree = t!(index.write_tree());
+                assert_eq!(
+                    staged_tree,
+                    parent.tree_id(),
+                    "cannot commit a package batch with staged registry changes at {}",
+                    index_file.registry_path.display()
+                );
+            }
+            repositories.insert(index_file.registry_path.clone(), repo);
+        }
+    }
+
+    let mut git_updates = BTreeMap::<PathBuf, Vec<String>>::new();
+    for (
+        IndexFile {
+            registry_path,
+            relative_path,
+            local,
+        },
+        lines,
+    ) in index_files
+    {
+        let dst = if local {
+            registry_path.join("index").join(&relative_path)
+        } else {
+            registry_path.join(&relative_path)
+        };
+        let mut contents = fs::read_to_string(&dst).unwrap_or_default();
+        for line in lines {
+            contents.push_str(&line);
+            contents.push('\n');
+        }
+        t!(fs::create_dir_all(dst.parent().unwrap()));
+        t!(fs::write(&dst, contents));
+
+        if !local {
+            git_updates
+                .entry(registry_path)
+                .or_default()
+                .push(relative_path);
+        }
+    }
+
+    for (registry_path, files) in git_updates {
+        let repo = repositories
+            .remove(&registry_path)
+            .unwrap_or_else(|| t!(git2::Repository::open(&registry_path)));
         let mut index = t!(repo.index());
-        t!(index.add_path(Path::new(&file)));
+        let parent = t!(repo.refname_to_id("refs/heads/master"));
+        let parent = t!(repo.find_commit(parent));
+        for file in files {
+            t!(index.add_path(Path::new(&file)));
+        }
         t!(index.write());
         let id = t!(index.write_tree());
 
         // Commit this change.
         let tree = t!(repo.find_tree(id));
         let sig = t!(repo.signature());
-        let parent = t!(repo.refname_to_id("refs/heads/master"));
-        let parent = t!(repo.find_commit(parent));
         t!(repo.commit(
             Some("HEAD"),
             &sig,

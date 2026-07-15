@@ -44,7 +44,9 @@
 
 use crate::git::repo;
 use crate::paths;
-use crate::publish::{create_index_line, write_to_index};
+use crate::publish::{
+    PendingIndexUpdate, create_index_line, write_index_update, write_index_updates, write_to_index,
+};
 use cargo_util::Sha256;
 use cargo_util::paths::append;
 use flate2::Compression;
@@ -535,6 +537,34 @@ impl RegistryBuilder {
     }
 }
 
+/// Packages whose index records remain deferred until [`PackageBatch::commit`].
+///
+/// Package archives are created eagerly by [`Package::publish_to`].
+/// Dropping a populated batch leaves those archives in place but discards its
+/// queued index records.
+///
+/// This helper is intended for fixture setup without concurrent registry
+/// readers. A commit writes destinations sequentially and is not transactional.
+#[derive(Default)]
+#[must_use = "a package batch must be committed to update the registry index"]
+pub struct PackageBatch {
+    updates: Vec<PendingIndexUpdate>,
+}
+
+impl PackageBatch {
+    /// Creates an empty package batch.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Writes all queued index updates and commits each non-local registry once.
+    ///
+    /// This rejects registries with changes already staged in their Git index.
+    pub fn commit(self) {
+        write_index_updates(self.updates);
+    }
+}
+
 /// Published package builder for [`TestRegistry`]
 ///
 /// This uses "source replacement" using an automatically generated
@@ -580,6 +610,11 @@ pub struct Package {
     cargo_features: Vec<String>,
     pubtime: Option<String>,
     v: Option<u32>,
+}
+
+struct PreparedPackage {
+    checksum: String,
+    update: PendingIndexUpdate,
 }
 
 pub(crate) type FeatureMap = BTreeMap<String, Vec<String>>;
@@ -1495,6 +1530,24 @@ impl Package {
     ///
     /// Returns the checksum for the package.
     pub fn publish(&self) -> String {
+        let PreparedPackage { checksum, update } = self.prepare();
+        write_index_update(update);
+        checksum
+    }
+
+    /// Creates the package archive and queues its index update in `batch`.
+    ///
+    /// The archive is created immediately, but the index record is not visible
+    /// until [`PackageBatch::commit`] is called.
+    ///
+    /// Returns the checksum for the package.
+    pub fn publish_to(&self, batch: &mut PackageBatch) -> String {
+        let PreparedPackage { checksum, update } = self.prepare();
+        batch.updates.push(update);
+        checksum
+    }
+
+    fn prepare(&self) -> PreparedPackage {
         self.make_archive();
 
         // Figure out what we're going to write into the index.
@@ -1567,9 +1620,10 @@ impl Package {
             registry_path()
         };
 
-        write_to_index(&registry_path, &self.name, line, self.local);
-
-        cksum
+        PreparedPackage {
+            checksum: cksum,
+            update: PendingIndexUpdate::new(registry_path, &self.name, line, self.local),
+        }
     }
 
     fn make_archive(&self) {
