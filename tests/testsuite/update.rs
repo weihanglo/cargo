@@ -3,7 +3,7 @@
 use crate::prelude::*;
 use cargo_test_support::compare::assert_e2e;
 use cargo_test_support::registry::{self};
-use cargo_test_support::registry::{Dependency, Package};
+use cargo_test_support::registry::{Dependency, Package, PackageBatch};
 use cargo_test_support::{basic_lib_manifest, basic_manifest, git, project, str};
 
 #[cargo_test]
@@ -2172,33 +2172,37 @@ fn update_breaking_dry_run() {
 #[cargo_test]
 fn update_breaking() {
     registry::alt_init();
-    Package::new("compatible", "1.0.0").publish();
-    Package::new("incompatible", "1.0.0").publish();
-    Package::new("pinned", "1.0.0").publish();
-    Package::new("less-than", "1.0.0").publish();
-    Package::new("renamed-from", "1.0.0").publish();
-    Package::new("pre-release", "1.0.0").publish();
-    Package::new("yanked", "1.0.0").publish();
-    Package::new("ws", "1.0.0").publish();
-    Package::new("shared", "1.0.0").publish();
-    Package::new("multiple-locations", "1.0.0").publish();
-    Package::new("multiple-versions", "1.0.0").publish();
-    Package::new("multiple-versions", "2.0.0").publish();
+    let mut packages = PackageBatch::new();
+    Package::new("compatible", "1.0.0").publish_to(&mut packages);
+    Package::new("incompatible", "1.0.0").publish_to(&mut packages);
+    Package::new("pinned", "1.0.0").publish_to(&mut packages);
+    Package::new("less-than", "1.0.0").publish_to(&mut packages);
+    Package::new("renamed-from", "1.0.0").publish_to(&mut packages);
+    Package::new("pre-release", "1.0.0").publish_to(&mut packages);
+    Package::new("yanked", "1.0.0").publish_to(&mut packages);
+    Package::new("ws", "1.0.0").publish_to(&mut packages);
+    Package::new("shared", "1.0.0").publish_to(&mut packages);
+    Package::new("multiple-locations", "1.0.0").publish_to(&mut packages);
+    Package::new("multiple-versions", "1.0.0").publish_to(&mut packages);
+    Package::new("multiple-versions", "2.0.0").publish_to(&mut packages);
     Package::new("alternative-1", "1.0.0")
         .alternative(true)
-        .publish();
+        .publish_to(&mut packages);
     Package::new("alternative-2", "1.0.0")
         .alternative(true)
-        .publish();
-    Package::new("bar", "1.0.0").alternative(true).publish();
-    Package::new("multiple-registries", "1.0.0").publish();
+        .publish_to(&mut packages);
+    Package::new("bar", "1.0.0")
+        .alternative(true)
+        .publish_to(&mut packages);
+    Package::new("multiple-registries", "1.0.0").publish_to(&mut packages);
     Package::new("multiple-registries", "2.0.0")
         .alternative(true)
-        .publish();
-    Package::new("multiple-source-types", "1.0.0").publish();
-    Package::new("platform-specific", "1.0.0").publish();
-    Package::new("dev", "1.0.0").publish();
-    Package::new("build", "1.0.0").publish();
+        .publish_to(&mut packages);
+    Package::new("multiple-source-types", "1.0.0").publish_to(&mut packages);
+    Package::new("platform-specific", "1.0.0").publish_to(&mut packages);
+    Package::new("dev", "1.0.0").publish_to(&mut packages);
+    Package::new("build", "1.0.0").publish_to(&mut packages);
+    packages.commit();
 
     let p = project()
         .file(
@@ -2299,50 +2303,56 @@ fn update_breaking() {
 
     p.cargo("generate-lockfile").run();
 
-    Package::new("compatible", "1.0.1").publish();
-    Package::new("incompatible", "1.0.1").publish();
-    Package::new("pinned", "1.0.1").publish();
-    Package::new("less-than", "1.0.1").publish();
-    Package::new("renamed-from", "1.0.1").publish();
-    Package::new("ws", "1.0.1").publish();
-    Package::new("multiple-locations", "1.0.1").publish();
-    Package::new("multiple-versions", "1.0.1").publish();
-    Package::new("multiple-versions", "2.0.1").publish();
+    let mut packages = PackageBatch::new();
+    Package::new("compatible", "1.0.1").publish_to(&mut packages);
+    Package::new("incompatible", "1.0.1").publish_to(&mut packages);
+    Package::new("pinned", "1.0.1").publish_to(&mut packages);
+    Package::new("less-than", "1.0.1").publish_to(&mut packages);
+    Package::new("renamed-from", "1.0.1").publish_to(&mut packages);
+    Package::new("ws", "1.0.1").publish_to(&mut packages);
+    Package::new("multiple-locations", "1.0.1").publish_to(&mut packages);
+    Package::new("multiple-versions", "1.0.1").publish_to(&mut packages);
+    Package::new("multiple-versions", "2.0.1").publish_to(&mut packages);
     Package::new("alternative-1", "1.0.1")
         .alternative(true)
-        .publish();
+        .publish_to(&mut packages);
     Package::new("alternative-2", "1.0.1")
         .alternative(true)
-        .publish();
-    Package::new("platform-specific", "1.0.1").publish();
-    Package::new("dev", "1.0.1").publish();
-    Package::new("build", "1.0.1").publish();
+        .publish_to(&mut packages);
+    Package::new("platform-specific", "1.0.1").publish_to(&mut packages);
+    Package::new("dev", "1.0.1").publish_to(&mut packages);
+    Package::new("build", "1.0.1").publish_to(&mut packages);
 
-    Package::new("incompatible", "2.0.0").publish();
-    Package::new("pinned", "2.0.0").publish();
-    Package::new("less-than", "2.0.0").publish();
-    Package::new("renamed-from", "2.0.0").publish();
-    Package::new("pre-release", "2.0.0-alpha").publish();
-    Package::new("yanked", "2.0.0").yanked(true).publish();
-    Package::new("ws", "2.0.0").publish();
-    Package::new("shared", "2.0.0").publish();
-    Package::new("multiple-locations", "2.0.0").publish();
-    Package::new("multiple-versions", "3.0.0").publish();
+    Package::new("incompatible", "2.0.0").publish_to(&mut packages);
+    Package::new("pinned", "2.0.0").publish_to(&mut packages);
+    Package::new("less-than", "2.0.0").publish_to(&mut packages);
+    Package::new("renamed-from", "2.0.0").publish_to(&mut packages);
+    Package::new("pre-release", "2.0.0-alpha").publish_to(&mut packages);
+    Package::new("yanked", "2.0.0")
+        .yanked(true)
+        .publish_to(&mut packages);
+    Package::new("ws", "2.0.0").publish_to(&mut packages);
+    Package::new("shared", "2.0.0").publish_to(&mut packages);
+    Package::new("multiple-locations", "2.0.0").publish_to(&mut packages);
+    Package::new("multiple-versions", "3.0.0").publish_to(&mut packages);
     Package::new("alternative-1", "2.0.0")
         .alternative(true)
-        .publish();
+        .publish_to(&mut packages);
     Package::new("alternative-2", "2.0.0")
         .alternative(true)
-        .publish();
-    Package::new("bar", "2.0.0").alternative(true).publish();
-    Package::new("multiple-registries", "2.0.0").publish();
+        .publish_to(&mut packages);
+    Package::new("bar", "2.0.0")
+        .alternative(true)
+        .publish_to(&mut packages);
+    Package::new("multiple-registries", "2.0.0").publish_to(&mut packages);
     Package::new("multiple-registries", "3.0.0")
         .alternative(true)
-        .publish();
-    Package::new("multiple-source-types", "2.0.0").publish();
-    Package::new("platform-specific", "2.0.0").publish();
-    Package::new("dev", "2.0.0").publish();
-    Package::new("build", "2.0.0").publish();
+        .publish_to(&mut packages);
+    Package::new("multiple-source-types", "2.0.0").publish_to(&mut packages);
+    Package::new("platform-specific", "2.0.0").publish_to(&mut packages);
+    Package::new("dev", "2.0.0").publish_to(&mut packages);
+    Package::new("build", "2.0.0").publish_to(&mut packages);
+    packages.commit();
 
     p.cargo("update -Zunstable-options --breaking")
         .masquerade_as_nightly_cargo(&["update-breaking"])
@@ -2476,15 +2486,17 @@ fn update_breaking() {
 
 #[cargo_test]
 fn update_breaking_specific_packages() {
+    let mut packages = PackageBatch::new();
     Package::new("just-foo", "1.0.0")
         .add_dep(Dependency::new("transitive-compatible", "1.0.0").build())
         .add_dep(Dependency::new("transitive-incompatible", "1.0.0").build())
-        .publish();
-    Package::new("just-bar", "1.0.0").publish();
-    Package::new("shared", "1.0.0").publish();
-    Package::new("ws", "1.0.0").publish();
-    Package::new("transitive-compatible", "1.0.0").publish();
-    Package::new("transitive-incompatible", "1.0.0").publish();
+        .publish_to(&mut packages);
+    Package::new("just-bar", "1.0.0").publish_to(&mut packages);
+    Package::new("shared", "1.0.0").publish_to(&mut packages);
+    Package::new("ws", "1.0.0").publish_to(&mut packages);
+    Package::new("transitive-compatible", "1.0.0").publish_to(&mut packages);
+    Package::new("transitive-incompatible", "1.0.0").publish_to(&mut packages);
+    packages.commit();
 
     let p = project()
         .file(
@@ -2533,26 +2545,28 @@ fn update_breaking_specific_packages() {
 
     p.cargo("generate-lockfile").run();
 
+    let mut packages = PackageBatch::new();
     Package::new("just-foo", "1.0.1")
         .add_dep(Dependency::new("transitive-compatible", "1.0.0").build())
         .add_dep(Dependency::new("transitive-incompatible", "1.0.0").build())
-        .publish();
-    Package::new("just-bar", "1.0.1").publish();
-    Package::new("shared", "1.0.1").publish();
-    Package::new("ws", "1.0.1").publish();
-    Package::new("transitive-compatible", "1.0.1").publish();
-    Package::new("transitive-incompatible", "1.0.1").publish();
+        .publish_to(&mut packages);
+    Package::new("just-bar", "1.0.1").publish_to(&mut packages);
+    Package::new("shared", "1.0.1").publish_to(&mut packages);
+    Package::new("ws", "1.0.1").publish_to(&mut packages);
+    Package::new("transitive-compatible", "1.0.1").publish_to(&mut packages);
+    Package::new("transitive-incompatible", "1.0.1").publish_to(&mut packages);
 
     Package::new("just-foo", "2.0.0")
         // Upgrading just-foo implies accepting an update of transitive-compatible.
         .add_dep(Dependency::new("transitive-compatible", "1.0.1").build())
         // Upgrading just-foo implies accepting a major update of transitive-incompatible.
         .add_dep(Dependency::new("transitive-incompatible", "2.0.0").build())
-        .publish();
-    Package::new("just-bar", "2.0.0").publish();
-    Package::new("shared", "2.0.0").publish();
-    Package::new("ws", "2.0.0").publish();
-    Package::new("transitive-incompatible", "2.0.0").publish();
+        .publish_to(&mut packages);
+    Package::new("just-bar", "2.0.0").publish_to(&mut packages);
+    Package::new("shared", "2.0.0").publish_to(&mut packages);
+    Package::new("ws", "2.0.0").publish_to(&mut packages);
+    Package::new("transitive-incompatible", "2.0.0").publish_to(&mut packages);
+    packages.commit();
 
     p.cargo("update -Zunstable-options --breaking just-foo shared ws")
         .masquerade_as_nightly_cargo(&["update-breaking"])
@@ -2574,15 +2588,17 @@ fn update_breaking_specific_packages() {
 
 #[cargo_test]
 fn update_breaking_specific_packages_that_wont_update() {
-    Package::new("compatible", "1.0.0").publish();
-    Package::new("renamed-from", "1.0.0").publish();
-    Package::new("non-semver", "1.0.0").publish();
+    let mut packages = PackageBatch::new();
+    Package::new("compatible", "1.0.0").publish_to(&mut packages);
+    Package::new("renamed-from", "1.0.0").publish_to(&mut packages);
+    Package::new("non-semver", "1.0.0").publish_to(&mut packages);
     Package::new("bar", "1.0.0")
         .add_dep(Dependency::new("transitive-compatible", "1.0.0").build())
         .add_dep(Dependency::new("transitive-incompatible", "1.0.0").build())
-        .publish();
-    Package::new("transitive-compatible", "1.0.0").publish();
-    Package::new("transitive-incompatible", "1.0.0").publish();
+        .publish_to(&mut packages);
+    Package::new("transitive-compatible", "1.0.0").publish_to(&mut packages);
+    Package::new("transitive-incompatible", "1.0.0").publish_to(&mut packages);
+    packages.commit();
 
     let crate_manifest = r#"
         # Check if formatting is preserved
@@ -2608,15 +2624,17 @@ fn update_breaking_specific_packages_that_wont_update() {
     p.cargo("generate-lockfile").run();
     let lock_file = p.read_file("Cargo.lock");
 
-    Package::new("compatible", "1.0.1").publish();
-    Package::new("renamed-from", "1.0.1").publish();
-    Package::new("non-semver", "1.0.1").publish();
-    Package::new("transitive-compatible", "1.0.1").publish();
-    Package::new("transitive-incompatible", "1.0.1").publish();
+    let mut packages = PackageBatch::new();
+    Package::new("compatible", "1.0.1").publish_to(&mut packages);
+    Package::new("renamed-from", "1.0.1").publish_to(&mut packages);
+    Package::new("non-semver", "1.0.1").publish_to(&mut packages);
+    Package::new("transitive-compatible", "1.0.1").publish_to(&mut packages);
+    Package::new("transitive-incompatible", "1.0.1").publish_to(&mut packages);
 
-    Package::new("renamed-from", "2.0.0").publish();
-    Package::new("non-semver", "2.0.0").publish();
-    Package::new("transitive-incompatible", "2.0.0").publish();
+    Package::new("renamed-from", "2.0.0").publish_to(&mut packages);
+    Package::new("non-semver", "2.0.0").publish_to(&mut packages);
+    Package::new("transitive-incompatible", "2.0.0").publish_to(&mut packages);
+    packages.commit();
 
     // Test that transitive dependencies produce helpful errors
     p.cargo("update -Zunstable-options --breaking transitive-compatible transitive-incompatible")
