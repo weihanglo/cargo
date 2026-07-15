@@ -2,37 +2,39 @@
 
 use crate::prelude::*;
 use cargo_test_support::project;
-use cargo_test_support::registry::{Dependency, Package};
+use cargo_test_support::registry::{Dependency, Package, PackageBatch};
 use cargo_test_support::str;
 
 #[cargo_test]
 fn dep_feature_various() {
     // Checks different ways of setting features via dependencies.
+    let mut batch = PackageBatch::new();
     Package::new("optdep", "1.0.0")
         .feature("default", &["cat"])
         .feature("cat", &[])
-        .publish();
+        .publish_to(&mut batch);
     Package::new("defaultdep", "1.0.0")
         .feature("default", &["f1"])
         .feature("f1", &["optdep"])
         .add_dep(Dependency::new("optdep", "1.0").optional(true))
-        .publish();
+        .publish_to(&mut batch);
     Package::new("nodefaultdep", "1.0.0")
         .feature("default", &["f1"])
         .feature("f1", &[])
-        .publish();
+        .publish_to(&mut batch);
     Package::new("nameddep", "1.0.0")
         .add_dep(Dependency::new("serde", "1.0").optional(true))
         .feature("default", &["serde-stuff"])
         .feature("serde-stuff", &["serde/derive"])
         .feature("vehicle", &["car"])
         .feature("car", &[])
-        .publish();
-    Package::new("serde_derive", "1.0.0").publish();
+        .publish_to(&mut batch);
+    Package::new("serde_derive", "1.0.0").publish_to(&mut batch);
     Package::new("serde", "1.0.0")
         .feature("derive", &["serde_derive"])
         .add_dep(Dependency::new("serde_derive", "1.0").optional(true))
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(
@@ -170,12 +172,16 @@ b v0.1.0 ([ROOT]/foo/b)
 #[cargo_test]
 fn slash_feature_name() {
     // dep_name/feat_name syntax
-    Package::new("opt", "1.0.0").feature("feat1", &[]).publish();
+    let mut batch = PackageBatch::new();
+    Package::new("opt", "1.0.0")
+        .feature("feat1", &[])
+        .publish_to(&mut batch);
     Package::new("notopt", "1.0.0")
         .feature("cat", &[])
         .feature("animal", &["cat"])
-        .publish();
-    Package::new("opt2", "1.0.0").publish();
+        .publish_to(&mut batch);
+    Package::new("opt2", "1.0.0").publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(
@@ -283,19 +289,21 @@ opt2 v1.0.0
 #[cargo_test]
 fn features_enables_inactive_target() {
     // Features that enable things on targets that are not enabled.
+    let mut batch = PackageBatch::new();
     Package::new("optdep", "1.0.0")
         .feature("feat1", &[])
-        .publish();
+        .publish_to(&mut batch);
     Package::new("dep1", "1.0.0")
         .feature("somefeat", &[])
-        .publish();
+        .publish_to(&mut batch);
     Package::new("dep2", "1.0.0")
         .add_dep(
             Dependency::new("optdep", "1.0.0")
                 .optional(true)
                 .target("cfg(whatever)"),
         )
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -353,8 +361,10 @@ foo v0.1.0 ([ROOT]/foo)
 
 #[cargo_test(nightly, reason = "exported_private_dependencies lint is unstable")]
 fn edge_public_no_features() {
-    Package::new("pub-defaultdep", "1.0.0").publish();
-    Package::new("priv-defaultdep", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("pub-defaultdep", "1.0.0").publish_to(&mut batch);
+    Package::new("priv-defaultdep", "1.0.0").publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(
@@ -388,22 +398,24 @@ foo v0.1.0 ([ROOT]/foo)
 
 #[cargo_test(nightly, reason = "exported_private_dependencies lint is unstable")]
 fn edge_public_transitive_features() {
+    let mut batch = PackageBatch::new();
     Package::new("pub-defaultdep", "1.0.0")
         .feature("default", &["f1"])
         .feature("f1", &["f2"])
         .feature("f2", &["optdep"])
         .add_dep(Dependency::new("optdep", "1.0").optional(true).public(true))
-        .publish();
+        .publish_to(&mut batch);
     Package::new("priv-defaultdep", "1.0.0")
         .feature("default", &["f1"])
         .feature("f1", &["f2"])
         .feature("f2", &["optdep"])
         .add_dep(Dependency::new("optdep", "1.0").optional(true))
-        .publish();
+        .publish_to(&mut batch);
     Package::new("optdep", "1.0.0")
         .feature("default", &["f"])
         .feature("f", &[])
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(
@@ -455,8 +467,14 @@ foo v0.1.0 ([ROOT]/foo)
 
 #[cargo_test(nightly, reason = "exported_private_dependencies lint is unstable")]
 fn edge_public_cli() {
-    Package::new("priv", "1.0.0").feature("f", &[]).publish();
-    Package::new("pub", "1.0.0").feature("f", &[]).publish();
+    let mut batch = PackageBatch::new();
+    Package::new("priv", "1.0.0")
+        .feature("f", &[])
+        .publish_to(&mut batch);
+    Package::new("pub", "1.0.0")
+        .feature("f", &[])
+        .publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(

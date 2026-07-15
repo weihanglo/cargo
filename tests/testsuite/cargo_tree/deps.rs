@@ -3,18 +3,28 @@
 use crate::prelude::*;
 use crate::utils::cross_compile::disabled as cross_compile_disabled;
 use cargo_test_support::cross_compile::alternate;
-use cargo_test_support::registry::{Dependency, Package};
+use cargo_test_support::registry::{Dependency, Package, PackageBatch};
 use cargo_test_support::str;
 use cargo_test_support::{Project, basic_manifest, git, project, rustc_host};
 
 use crate::features2::switch_to_resolver_2;
 
 fn make_simple_proj() -> Project {
-    Package::new("c", "1.0.0").publish();
-    Package::new("b", "1.0.0").dep("c", "1.0").publish();
-    Package::new("a", "1.0.0").dep("b", "1.0").publish();
-    Package::new("bdep", "1.0.0").dep("b", "1.0").publish();
-    Package::new("devdep", "1.0.0").dep("b", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("c", "1.0.0").publish_to(&mut batch);
+    Package::new("b", "1.0.0")
+        .dep("c", "1.0")
+        .publish_to(&mut batch);
+    Package::new("a", "1.0.0")
+        .dep("b", "1.0")
+        .publish_to(&mut batch);
+    Package::new("bdep", "1.0.0")
+        .dep("b", "1.0")
+        .publish_to(&mut batch);
+    Package::new("devdep", "1.0.0")
+        .dep("b", "1.0.0")
+        .publish_to(&mut batch);
+    batch.commit();
 
     project()
         .file(
@@ -167,22 +177,24 @@ baz v0.1.0 ([ROOT]/foo/baz)
 #[cargo_test]
 fn dedupe_edges() {
     // Works around https://github.com/rust-lang/cargo/issues/7985
-    Package::new("bitflags", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("bitflags", "1.0.0").publish_to(&mut batch);
     Package::new("manyfeat", "1.0.0")
         .feature("f1", &[])
         .feature("f2", &[])
         .feature("f3", &[])
         .dep("bitflags", "1.0")
-        .publish();
+        .publish_to(&mut batch);
     Package::new("a", "1.0.0")
         .feature_dep("manyfeat", "1.0", &["f1"])
-        .publish();
+        .publish_to(&mut batch);
     Package::new("b", "1.0.0")
         .feature_dep("manyfeat", "1.0", &["f2"])
-        .publish();
+        .publish_to(&mut batch);
     Package::new("c", "1.0.0")
         .feature_dep("manyfeat", "1.0", &["f3"])
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(
@@ -219,10 +231,16 @@ foo v0.1.0 ([ROOT]/foo)
 #[cargo_test]
 fn renamed_deps() {
     // Handles renamed dependencies.
-    Package::new("one", "1.0.0").publish();
-    Package::new("two", "1.0.0").publish();
-    Package::new("bar", "1.0.0").dep("one", "1.0").publish();
-    Package::new("bar", "2.0.0").dep("two", "1.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("one", "1.0.0").publish_to(&mut batch);
+    Package::new("two", "1.0.0").publish_to(&mut batch);
+    Package::new("bar", "1.0.0")
+        .dep("one", "1.0")
+        .publish_to(&mut batch);
+    Package::new("bar", "2.0.0")
+        .dep("two", "1.0")
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -295,8 +313,10 @@ foo v0.1.0 ([ROOT]/foo)
 #[cargo_test]
 fn features() {
     // Exercises a variety of feature behaviors.
-    Package::new("optdep_default", "1.0.0").publish();
-    Package::new("optdep", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("optdep_default", "1.0.0").publish_to(&mut batch);
+    Package::new("optdep", "1.0.0").publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -356,18 +376,22 @@ fn filters_target() {
     if cross_compile_disabled() {
         return;
     }
-    Package::new("targetdep", "1.0.0").publish();
-    Package::new("hostdep", "1.0.0").publish();
-    Package::new("devdep", "1.0.0").publish();
-    Package::new("build_target_dep", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("targetdep", "1.0.0").publish_to(&mut batch);
+    Package::new("hostdep", "1.0.0").publish_to(&mut batch);
+    Package::new("devdep", "1.0.0").publish_to(&mut batch);
+    Package::new("build_target_dep", "1.0.0").publish_to(&mut batch);
     Package::new("build_host_dep", "1.0.0")
         .target_dep("targetdep", "1.0", alternate())
         .target_dep("hostdep", "1.0", rustc_host())
-        .publish();
+        .publish_to(&mut batch);
     Package::new("pm_target", "1.0.0")
         .proc_macro(true)
-        .publish();
-    Package::new("pm_host", "1.0.0").proc_macro(true).publish();
+        .publish_to(&mut batch);
+    Package::new("pm_host", "1.0.0")
+        .proc_macro(true)
+        .publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(
@@ -533,30 +557,34 @@ targetdep v1.0.0
 
 #[cargo_test]
 fn dep_kinds() {
-    Package::new("inner-devdep", "1.0.0").publish();
-    Package::new("inner-builddep", "1.0.0").publish();
-    Package::new("inner-normal", "1.0.0").publish();
-    Package::new("inner-pm", "1.0.0").proc_macro(true).publish();
+    let mut batch = PackageBatch::new();
+    Package::new("inner-devdep", "1.0.0").publish_to(&mut batch);
+    Package::new("inner-builddep", "1.0.0").publish_to(&mut batch);
+    Package::new("inner-normal", "1.0.0").publish_to(&mut batch);
+    Package::new("inner-pm", "1.0.0")
+        .proc_macro(true)
+        .publish_to(&mut batch);
     Package::new("inner-buildpm", "1.0.0")
         .proc_macro(true)
-        .publish();
+        .publish_to(&mut batch);
     Package::new("normaldep", "1.0.0")
         .dep("inner-normal", "1.0")
         .dev_dep("inner-devdep", "1.0")
         .build_dep("inner-builddep", "1.0")
-        .publish();
+        .publish_to(&mut batch);
     Package::new("devdep", "1.0.0")
         .dep("inner-normal", "1.0")
         .dep("inner-pm", "1.0")
         .dev_dep("inner-devdep", "1.0")
         .build_dep("inner-builddep", "1.0")
         .build_dep("inner-buildpm", "1.0")
-        .publish();
+        .publish_to(&mut batch);
     Package::new("builddep", "1.0.0")
         .dep("inner-normal", "1.0")
         .dev_dep("inner-devdep", "1.0")
         .build_dep("inner-builddep", "1.0")
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -711,10 +739,16 @@ foo v0.1.0 ([ROOT]/foo)
 
 #[cargo_test]
 fn invert() {
-    Package::new("b1", "1.0.0").dep("c", "1.0").publish();
-    Package::new("b2", "1.0.0").dep("d", "1.0").publish();
-    Package::new("c", "1.0.0").publish();
-    Package::new("d", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("b1", "1.0.0")
+        .dep("c", "1.0")
+        .publish_to(&mut batch);
+    Package::new("b2", "1.0.0")
+        .dep("d", "1.0")
+        .publish_to(&mut batch);
+    Package::new("c", "1.0.0").publish_to(&mut batch);
+    Package::new("d", "1.0.0").publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -812,8 +846,12 @@ fn invert_without_package_name_workspace() {
 #[cargo_test]
 fn invert_with_build_dep() {
     // -i for a common dependency between normal and build deps.
-    Package::new("common", "1.0.0").publish();
-    Package::new("bdep", "1.0.0").dep("common", "1.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("common", "1.0.0").publish_to(&mut batch);
+    Package::new("bdep", "1.0.0")
+        .dep("common", "1.0")
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -972,14 +1010,16 @@ foo v0.1.0 ([ROOT]/foo)
 
 #[cargo_test]
 fn duplicates() {
-    Package::new("dog", "1.0.0").publish();
-    Package::new("dog", "2.0.0").publish();
-    Package::new("cat", "1.0.0").publish();
-    Package::new("cat", "2.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("dog", "1.0.0").publish_to(&mut batch);
+    Package::new("dog", "2.0.0").publish_to(&mut batch);
+    Package::new("cat", "1.0.0").publish_to(&mut batch);
+    Package::new("cat", "2.0.0").publish_to(&mut batch);
     Package::new("dep", "1.0.0")
         .dep("dog", "1.0")
         .dep("cat", "1.0")
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -1066,8 +1106,10 @@ fn duplicates_with_target() {
     if cross_compile_disabled() {
         return;
     }
-    Package::new("a", "1.0.0").publish();
-    Package::new("dog", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("a", "1.0.0").publish_to(&mut batch);
+    Package::new("dog", "1.0.0").publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(
@@ -1109,12 +1151,14 @@ fn duplicates_with_target() {
 
 #[cargo_test]
 fn duplicates_with_proc_macro() {
-    Package::new("dupe-dep", "1.0.0").publish();
-    Package::new("dupe-dep", "2.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("dupe-dep", "1.0.0").publish_to(&mut batch);
+    Package::new("dupe-dep", "2.0.0").publish_to(&mut batch);
     Package::new("proc", "1.0.0")
         .proc_macro(true)
         .dep("dupe-dep", "1.0")
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -1181,8 +1225,9 @@ foo v0.1.0 ([ROOT]/foo)
 
 #[cargo_test]
 fn format() {
-    Package::new("dep", "1.0.0").publish();
-    Package::new("other-dep", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("dep", "1.0.0").publish_to(&mut batch);
+    Package::new("other-dep", "1.0.0").publish_to(&mut batch);
 
     Package::new("dep_that_is_awesome", "1.0.0")
         .file(
@@ -1197,7 +1242,8 @@ fn format() {
             "#,
         )
         .file("src/lib.rs", "pub struct Straw;")
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(
@@ -1291,10 +1337,12 @@ foo v0.1.0 ([ROOT]/foo) [bar,default,dep,dep_that_is_awesome,foo,other-dep]
 #[cargo_test]
 fn dev_dep_feature() {
     // New feature resolver with optional dep
-    Package::new("optdep", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("optdep", "1.0.0").publish_to(&mut batch);
     Package::new("bar", "1.0.0")
         .add_dep(Dependency::new("optdep", "1.0").optional(true))
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -1360,10 +1408,12 @@ foo v0.1.0 ([ROOT]/foo)
 #[cargo_test]
 fn host_dep_feature() {
     // New feature resolver with optional build dep
-    Package::new("optdep", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("optdep", "1.0.0").publish_to(&mut batch);
     Package::new("bar", "1.0.0")
         .add_dep(Dependency::new("optdep", "1.0").optional(true))
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -1467,14 +1517,16 @@ bar v1.0.0
 #[cargo_test]
 fn proc_macro_features() {
     // New feature resolver with a proc-macro
-    Package::new("optdep", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("optdep", "1.0.0").publish_to(&mut batch);
     Package::new("somedep", "1.0.0")
         .add_dep(Dependency::new("optdep", "1.0").optional(true))
-        .publish();
+        .publish_to(&mut batch);
     Package::new("pm", "1.0.0")
         .proc_macro(true)
         .feature_dep("somedep", "1.0", &["optdep"])
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -1608,10 +1660,12 @@ somedep v1.0.0
 #[cargo_test]
 fn itarget_opt_dep() {
     // New feature resolver with optional target dep
-    Package::new("optdep", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("optdep", "1.0.0").publish_to(&mut batch);
     Package::new("common", "1.0.0")
         .add_dep(Dependency::new("optdep", "1.0").optional(true))
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(
@@ -1657,9 +1711,13 @@ foo v1.0.0 ([ROOT]/foo)
 #[cargo_test]
 fn ambiguous_name() {
     // -p that is ambiguous.
-    Package::new("dep", "1.0.0").publish();
-    Package::new("dep", "2.0.0").publish();
-    Package::new("bar", "1.0.0").dep("dep", "2.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("dep", "1.0.0").publish_to(&mut batch);
+    Package::new("dep", "2.0.0").publish_to(&mut batch);
+    Package::new("bar", "1.0.0")
+        .dep("dep", "2.0")
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -1702,10 +1760,12 @@ fn ambiguous_name() {
 fn workspace_features_are_local() {
     // The features for workspace packages should be the same as `cargo build`
     // (i.e., the features selected depend on the "current" package).
-    Package::new("optdep", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("optdep", "1.0.0").publish_to(&mut batch);
     Package::new("somedep", "1.0.0")
         .add_dep(Dependency::new("optdep", "1.0").optional(true))
-        .publish();
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -1909,8 +1969,10 @@ c v1.0.0
 
 #[cargo_test]
 fn depth_workspace() {
-    Package::new("somedep", "1.0.0").publish();
-    Package::new("otherdep", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("somedep", "1.0.0").publish_to(&mut batch);
+    Package::new("otherdep", "1.0.0").publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",
@@ -2381,8 +2443,12 @@ foo v1.0.0 ([ROOT]/foo)
 
 #[cargo_test]
 fn no_proc_macro_order() {
-    Package::new("dep", "1.0.0").publish();
-    Package::new("pm", "1.0.0").proc_macro(true).publish();
+    let mut batch = PackageBatch::new();
+    Package::new("dep", "1.0.0").publish_to(&mut batch);
+    Package::new("pm", "1.0.0")
+        .proc_macro(true)
+        .publish_to(&mut batch);
+    batch.commit();
     let p = project()
         .file(
             "Cargo.toml",

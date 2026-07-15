@@ -1,14 +1,20 @@
 use crate::prelude::*;
 use cargo_test_support::file;
 use cargo_test_support::project;
-use cargo_test_support::registry::Package;
+use cargo_test_support::registry::{Package, PackageBatch};
 use cargo_test_support::str;
 
 #[cargo_test]
 fn case() {
-    Package::new("a", "1.0.0").dep("b", "1.0").publish();
-    Package::new("b", "1.0.0").dep("c", "1.0").publish();
-    Package::new("c", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("a", "1.0.0")
+        .dep("b", "1.0")
+        .publish_to(&mut batch);
+    Package::new("b", "1.0.0")
+        .dep("c", "1.0")
+        .publish_to(&mut batch);
+    Package::new("c", "1.0.0").publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(
@@ -38,9 +44,15 @@ fn case() {
 
 #[cargo_test]
 fn all_flag() {
-    Package::new("a", "1.0.0").dep("b", "1.0").publish();
-    Package::new("b", "1.0.0").dep("c", "1.0").publish();
-    Package::new("c", "1.0.0").publish();
+    let mut batch = PackageBatch::new();
+    Package::new("a", "1.0.0")
+        .dep("b", "1.0")
+        .publish_to(&mut batch);
+    Package::new("b", "1.0.0")
+        .dep("c", "1.0")
+        .publish_to(&mut batch);
+    Package::new("c", "1.0.0").publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(

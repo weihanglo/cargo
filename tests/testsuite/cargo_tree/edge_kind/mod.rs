@@ -1,64 +1,68 @@
 use crate::prelude::*;
 use cargo_test_support::file;
 use cargo_test_support::project;
-use cargo_test_support::registry::Package;
+use cargo_test_support::registry::{Package, PackageBatch};
 
 #[cargo_test]
 fn case() {
+    let mut batch = PackageBatch::new();
     Package::new("normal_a", "1.0.0")
         .dep("normal_b", "1.0")
-        .publish();
+        .publish_to(&mut batch);
     Package::new("normal_b", "1.0.0")
         .dep("normal_c", "1.0")
         .build_dep("normal_b_build_a", "1.0.0")
         .dev_dep("normal_b_dev_a", "1.0.0")
-        .publish();
-    Package::new("normal_c", "1.0.0").publish();
+        .publish_to(&mut batch);
+    Package::new("normal_c", "1.0.0").publish_to(&mut batch);
     Package::new("normal_b_build_a", "1.0.0")
         .dep("normal_b_build_a_normal_a", "1.0.0")
-        .publish();
-    Package::new("normal_b_build_a_normal_a", "1.0.0").publish();
+        .publish_to(&mut batch);
+    Package::new("normal_b_build_a_normal_a", "1.0.0").publish_to(&mut batch);
     Package::new("normal_b_dev_a", "1.0.0")
         .dep("normal_b_dev_a_normal_a", "1.0.0")
-        .publish();
-    Package::new("normal_b_dev_a_normal_a", "1.0.0").publish();
-    Package::new("normal_d", "1.0.0").publish();
+        .publish_to(&mut batch);
+    Package::new("normal_b_dev_a_normal_a", "1.0.0").publish_to(&mut batch);
+    Package::new("normal_d", "1.0.0").publish_to(&mut batch);
 
     Package::new("build_a", "1.0.0")
         .dep("build_b", "1.0")
-        .publish();
+        .publish_to(&mut batch);
     Package::new("build_b", "1.0.0")
         .dep("build_c", "1.0")
         .build_dep("build_b_build_a", "1.0.0")
         .dev_dep("build_b_dev_a", "1.0.0")
-        .publish();
-    Package::new("build_c", "1.0.0").publish();
+        .publish_to(&mut batch);
+    Package::new("build_c", "1.0.0").publish_to(&mut batch);
     Package::new("build_b_build_a", "1.0.0")
         .dep("build_b_build_a_normal_a", "1.0.0")
-        .publish();
-    Package::new("build_b_build_a_normal_a", "1.0.0").publish();
+        .publish_to(&mut batch);
+    Package::new("build_b_build_a_normal_a", "1.0.0").publish_to(&mut batch);
     Package::new("build_b_dev_a", "1.0.0")
         .dep("build_b_dev_a_normal_a", "1.0.0")
-        .publish();
-    Package::new("build_b_dev_a_normal_a", "1.0.0").publish();
-    Package::new("build_d", "1.0.0").publish();
+        .publish_to(&mut batch);
+    Package::new("build_b_dev_a_normal_a", "1.0.0").publish_to(&mut batch);
+    Package::new("build_d", "1.0.0").publish_to(&mut batch);
 
-    Package::new("dev_a", "1.0.0").dep("dev_b", "1.0").publish();
+    Package::new("dev_a", "1.0.0")
+        .dep("dev_b", "1.0")
+        .publish_to(&mut batch);
     Package::new("dev_b", "1.0.0")
         .dep("dev_c", "1.0")
         .build_dep("dev_b_build_a", "1.0.0")
         .dev_dep("dev_b_dev_a", "1.0.0")
-        .publish();
-    Package::new("dev_c", "1.0.0").publish();
+        .publish_to(&mut batch);
+    Package::new("dev_c", "1.0.0").publish_to(&mut batch);
     Package::new("dev_b_build_a", "1.0.0")
         .dep("dev_b_build_a_normal_a", "1.0.0")
-        .publish();
-    Package::new("dev_b_build_a_normal_a", "1.0.0").publish();
+        .publish_to(&mut batch);
+    Package::new("dev_b_build_a_normal_a", "1.0.0").publish_to(&mut batch);
     Package::new("dev_b_dev_a", "1.0.0")
         .dep("dev_b_dev_a_normal_a", "1.0.0")
-        .publish();
-    Package::new("dev_b_dev_a_normal_a", "1.0.0").publish();
-    Package::new("dev_d", "1.0.0").publish();
+        .publish_to(&mut batch);
+    Package::new("dev_b_dev_a_normal_a", "1.0.0").publish_to(&mut batch);
+    Package::new("dev_d", "1.0.0").publish_to(&mut batch);
+    batch.commit();
 
     let p = project()
         .file(
