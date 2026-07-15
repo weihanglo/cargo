@@ -1,3 +1,5 @@
+use cargo_test_support::registry::PackageBatch;
+
 mod basic;
 mod crate_name_normalization_from_hyphen_to_underscore;
 mod crate_name_normalization_from_underscore_to_hyphen;
@@ -40,4 +42,10 @@ pub(crate) fn init_registry_without_token() {
     let _reg = cargo_test_support::registry::RegistryBuilder::new()
         .no_configure_token()
         .build();
+}
+
+fn publish_packages(prepare: impl FnOnce(&mut PackageBatch)) {
+    let mut packages = PackageBatch::new();
+    prepare(&mut packages);
+    packages.commit();
 }

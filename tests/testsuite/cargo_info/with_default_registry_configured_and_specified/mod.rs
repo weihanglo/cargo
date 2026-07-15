@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use cargo_test_support::registry::Package;
 use cargo_test_support::{Project, compare::assert_ui, current_dir, file};
 
 use super::init_registry_without_token;
@@ -7,9 +8,11 @@ use super::init_registry_without_token;
 fn case() {
     init_registry_without_token();
 
-    for ver in ["0.1.1+foo", "0.2.0+foo"] {
-        cargo_test_support::registry::Package::new("foo", ver).publish();
-    }
+    super::publish_packages(|batch| {
+        for ver in ["0.1.1+foo", "0.2.0+foo"] {
+            Package::new("foo", ver).publish_to(batch);
+        }
+    });
 
     let project = Project::from_template(current_dir!().join("in"));
     let project_root = project.root();

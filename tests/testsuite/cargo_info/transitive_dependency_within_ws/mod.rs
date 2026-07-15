@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use cargo_test_support::registry::Package;
 use cargo_test_support::{Project, compare::assert_ui, current_dir, file};
 
 use super::init_registry_without_token;
@@ -7,19 +8,21 @@ use super::init_registry_without_token;
 fn case() {
     init_registry_without_token();
     // 99.0.0 is unused
-    for ver in ["1.0.0", "2.0.0", "3.0.0", "99.0.0"] {
-        cargo_test_support::registry::Package::new("my-package", ver).publish();
-    }
-    // Dep1 depends on 3.0.0, Dep2 depends on 2.0.0, Dep3 depends on 1.0.0
-    cargo_test_support::registry::Package::new("dep1", "1.0.0")
-        .dep("my-package", "1.0.0")
-        .publish();
-    cargo_test_support::registry::Package::new("dep2", "1.0.0")
-        .dep("my-package", "2.0.0")
-        .publish();
-    cargo_test_support::registry::Package::new("dep3", "1.0.0")
-        .dep("my-package", "3.0.0")
-        .publish();
+    super::publish_packages(|batch| {
+        for ver in ["1.0.0", "2.0.0", "3.0.0", "99.0.0"] {
+            Package::new("my-package", ver).publish_to(batch);
+        }
+        // Dep1 depends on 3.0.0, Dep2 depends on 2.0.0, Dep3 depends on 1.0.0
+        Package::new("dep1", "1.0.0")
+            .dep("my-package", "1.0.0")
+            .publish_to(batch);
+        Package::new("dep2", "1.0.0")
+            .dep("my-package", "2.0.0")
+            .publish_to(batch);
+        Package::new("dep3", "1.0.0")
+            .dep("my-package", "3.0.0")
+            .publish_to(batch);
+    });
 
     let project = Project::from_template(current_dir!().join("in"));
     let project_root = project.root();
