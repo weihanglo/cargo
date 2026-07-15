@@ -103,6 +103,82 @@ fn simple(pre_clean_expected: impl IntoData, post_clean_expected: impl IntoData)
     p.cargo("check").with_stderr_data(post_clean_expected).run();
 }
 
+fn registry_head(path: &Path) -> git2::Oid {
+    git2::Repository::open(path)
+        .unwrap()
+        .head()
+        .unwrap()
+        .target()
+        .unwrap()
+}
+
+#[cargo_test]
+fn package_publish_is_immediate_and_ordered() {
+    registry::init();
+    let index_path = registry_path().join("3/f/foo");
+    let initial_line = r#"{"name":"foo","vers":"0.1.0","custom":true}"#;
+    let initial_head = registry_head(&registry_path());
+
+    Package::new("foo", "0.1.0")
+        .index_line(initial_line)
+        .publish();
+    let first_head = registry_head(&registry_path());
+    assert_ne!(first_head, initial_head);
+    assert_eq!(
+        fs::read_to_string(&index_path).unwrap(),
+        initial_line.to_owned() + "\n"
+    );
+
+    let checksum_020 = Package::new("foo", "0.2.0").publish();
+    let second_head = registry_head(&registry_path());
+    assert_ne!(second_head, first_head);
+
+    let checksum_030 = Package::new("foo", "0.3.0").publish();
+    let third_head = registry_head(&registry_path());
+    assert_ne!(third_head, second_head);
+
+    let contents = fs::read_to_string(index_path).unwrap();
+    let mut lines = contents.lines();
+    assert_eq!(lines.next(), Some(initial_line));
+
+    let line_020: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+    assert_eq!(line_020["vers"], "0.2.0");
+    assert_eq!(line_020["cksum"], checksum_020);
+
+    let line_030: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+    assert_eq!(line_030["vers"], "0.3.0");
+    assert_eq!(line_030["cksum"], checksum_030);
+    assert_eq!(lines.next(), None);
+}
+
+#[cargo_test]
+fn package_publish_respects_registry_destination() {
+    registry::alt_init();
+    let primary_path = registry_path();
+    let alternative_path = registry::alt_registry_path();
+    let primary_head = registry_head(&primary_path);
+    let alternative_head = registry_head(&alternative_path);
+
+    Package::new("primary-package", "1.0.0").publish();
+    let primary_published_head = registry_head(&primary_path);
+    assert_ne!(primary_published_head, primary_head);
+    assert_eq!(registry_head(&alternative_path), alternative_head);
+
+    Package::new("alternative-package", "1.0.0")
+        .alternative(true)
+        .publish();
+    let alternative_published_head = registry_head(&alternative_path);
+    assert_ne!(alternative_published_head, alternative_head);
+    assert_eq!(registry_head(&primary_path), primary_published_head);
+
+    Package::new("local-package", "1.0.0").local(true).publish();
+    assert_eq!(registry_head(&primary_path), primary_published_head);
+
+    assert!(primary_path.join("pr/im/primary-package").is_file());
+    assert!(alternative_path.join("al/te/alternative-package").is_file());
+    assert!(primary_path.join("index/lo/ca/local-package").is_file());
+}
+
 #[cargo_test]
 fn deps_http() {
     let _server = setup_http();
