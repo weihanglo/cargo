@@ -183,6 +183,26 @@ fn package_publish_is_immediate_and_ordered() {
 }
 
 #[cargo_test]
+fn package_publish_updates_http_index_immediately() {
+    let _registry = RegistryBuilder::new().http_index().build();
+    let root = registry_path();
+    let index_path = root.join("sp/ar/sparse-package");
+    let initial_head = registry_head(&root);
+
+    let package = Package::new("sparse-package", "1.0.0");
+    let archive = package.archive_dst();
+    let checksum = package.publish();
+
+    assert!(archive.is_file());
+    assert_registry_commit(&root, initial_head);
+
+    let record: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(index_path).unwrap()).unwrap();
+    assert_eq!(record["vers"], "1.0.0");
+    assert_eq!(record["cksum"], checksum);
+}
+
+#[cargo_test]
 fn package_publish_respects_registry_destination() {
     registry::alt_init();
     let primary_path = registry_path();
@@ -270,6 +290,31 @@ fn package_batch_defers_index_updates_and_commits_once() {
 
     PackageBatch::new().commit();
     assert_eq!(registry_head(&registry_path), committed_head);
+}
+
+#[cargo_test]
+fn package_batch_defers_http_index_updates() {
+    let _registry = RegistryBuilder::new().http_index().build();
+    let root = registry_path();
+    let index_path = root.join("sp/ar/sparse-package");
+    let initial_head = registry_head(&root);
+
+    let package = Package::new("sparse-package", "1.0.0");
+    let archive = package.archive_dst();
+    let mut batch = PackageBatch::new();
+    let checksum = package.publish_to(&mut batch);
+
+    assert!(archive.is_file());
+    assert!(!index_path.exists());
+    assert_eq!(registry_head(&root), initial_head);
+
+    batch.commit();
+
+    assert_registry_commit(&root, initial_head);
+    let record: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(index_path).unwrap()).unwrap();
+    assert_eq!(record["vers"], "1.0.0");
+    assert_eq!(record["cksum"], checksum);
 }
 
 #[cargo_test]
@@ -372,6 +417,42 @@ fn package_batch_groups_registry_destinations() {
             .get_path(&local_relative_path, 0)
             .is_none()
     );
+}
+
+#[cargo_test]
+fn package_batch_groups_http_and_git_index_destinations() {
+    let _primary = RegistryBuilder::new().http_index().build();
+    let _alternative = RegistryBuilder::new().alternative().build();
+
+    let primary_root = registry_path();
+    let alternative_root = registry::alt_registry_path();
+    let primary_index = primary_root.join("pr/im/primary-http");
+    let alternative_index = alternative_root.join("al/te/alternative-git");
+    let primary_head = registry_head(&primary_root);
+    let alternative_head = registry_head(&alternative_root);
+
+    let mut batch = PackageBatch::new();
+    let primary_checksum = Package::new("primary-http", "1.0.0").publish_to(&mut batch);
+    let alternative_checksum = Package::new("alternative-git", "1.0.0")
+        .alternative(true)
+        .publish_to(&mut batch);
+
+    assert!(!primary_index.exists());
+    assert!(!alternative_index.exists());
+    assert_eq!(registry_head(&primary_root), primary_head);
+    assert_eq!(registry_head(&alternative_root), alternative_head);
+
+    batch.commit();
+
+    assert_registry_commit(&primary_root, primary_head);
+    assert_registry_commit(&alternative_root, alternative_head);
+
+    let primary: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(primary_index).unwrap()).unwrap();
+    let alternative: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(alternative_index).unwrap()).unwrap();
+    assert_eq!(primary["cksum"], primary_checksum);
+    assert_eq!(alternative["cksum"], alternative_checksum);
 }
 
 #[cargo_test]
