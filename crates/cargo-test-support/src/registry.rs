@@ -66,11 +66,14 @@ use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 use url::Url;
 
+/// Marks an index whose files are served directly without Git bookkeeping.
+pub(crate) const SPARSE_INDEX_MARKER: &str = ".cargo-test-support-sparse-index";
+
 /// Path to the local index for pseudo-crates.io.
 ///
-/// This is a Git repo
-/// initialized with a `config.json` file pointing to `dl_path` for downloads
-/// and `api_path` for uploads.
+/// This is initialized with a `config.json` file pointing to `dl_path` for
+/// downloads and `api_path` for uploads.
+/// It is a Git repository unless [`RegistryBuilder::http_index`] is enabled.
 ///
 /// ex: `$CARGO_TARGET_TMPDIR/cit/t0/registry`
 pub fn registry_path() -> PathBuf {
@@ -177,7 +180,7 @@ pub struct RegistryBuilder {
     custom_responders: HashMap<String, RequestCallback>,
     /// Handler for 404 responses.
     not_found_handler: RequestCallback,
-    /// If nonzero, the git index update to be delayed by the given number of seconds.
+    /// If nonzero, the registry index update is delayed by the given number of seconds.
     delayed_index_update: usize,
     /// Credential provider in configuration
     credential_provider: Option<String>,
@@ -277,7 +280,7 @@ impl RegistryBuilder {
         self
     }
 
-    /// Configures the git index update to be delayed by the given number of seconds.
+    /// Configures the registry index update to be delayed by the given number of seconds.
     #[must_use]
     pub fn delayed_index_update(mut self, delay: usize) -> Self {
         self.delayed_index_update = delay;
@@ -326,7 +329,7 @@ impl RegistryBuilder {
         self
     }
 
-    /// Operate the index over http
+    /// Serves a plain sparse index over HTTP without Git backing.
     #[must_use]
     pub fn http_index(mut self) -> Self {
         self.http_index = true;
@@ -525,12 +528,25 @@ impl RegistryBuilder {
             String::new()
         };
         // Initialize a new registry.
-        repo(&registry.path)
-            .file(
-                "config.json",
-                &format!(r#"{{"dl":"{}"{api}{auth}}}"#, registry.dl_url),
-            )
-            .build();
+        let config = format!(r#"{{"dl":"{}"{api}{auth}}}"#, registry.dl_url);
+        let sparse_index_marker = registry.path.join(SPARSE_INDEX_MARKER);
+        if self.http_index {
+            assert!(
+                !registry.path.join(".git").exists(),
+                "cannot initialize a sparse index over a Git registry at {}",
+                registry.path.display()
+            );
+            t!(fs::create_dir_all(&registry.path));
+            t!(fs::write(&sparse_index_marker, []));
+            t!(fs::write(registry.path.join("config.json"), config));
+        } else {
+            assert!(
+                !sparse_index_marker.exists(),
+                "cannot initialize a Git index over a sparse registry at {}",
+                registry.path.display()
+            );
+            repo(&registry.path).file("config.json", &config).build();
+        }
         fs::create_dir_all(api_path.join("api/v1/crates")).unwrap();
 
         registry
@@ -557,9 +573,10 @@ impl PackageBatch {
         Self::default()
     }
 
-    /// Writes all queued index updates and commits each non-local registry once.
+    /// Writes all queued index updates and commits each Git registry once.
     ///
-    /// This rejects registries with changes already staged in their Git index.
+    /// Sparse and local indexes are written directly.
+    /// This rejects Git registries with changes already staged in their index.
     pub fn commit(self) {
         write_index_updates(self.updates);
     }

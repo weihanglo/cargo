@@ -187,14 +187,16 @@ fn package_publish_updates_http_index_immediately() {
     let _registry = RegistryBuilder::new().http_index().build();
     let root = registry_path();
     let index_path = root.join("sp/ar/sparse-package");
-    let initial_head = registry_head(&root);
+
+    assert!(root.join("config.json").is_file());
+    assert!(!root.join(".git").exists());
 
     let package = Package::new("sparse-package", "1.0.0");
     let archive = package.archive_dst();
     let checksum = package.publish();
 
     assert!(archive.is_file());
-    assert_registry_commit(&root, initial_head);
+    assert!(!root.join(".git").exists());
 
     let record: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(index_path).unwrap()).unwrap();
@@ -297,7 +299,9 @@ fn package_batch_defers_http_index_updates() {
     let _registry = RegistryBuilder::new().http_index().build();
     let root = registry_path();
     let index_path = root.join("sp/ar/sparse-package");
-    let initial_head = registry_head(&root);
+
+    assert!(root.join("config.json").is_file());
+    assert!(!root.join(".git").exists());
 
     let package = Package::new("sparse-package", "1.0.0");
     let archive = package.archive_dst();
@@ -306,11 +310,11 @@ fn package_batch_defers_http_index_updates() {
 
     assert!(archive.is_file());
     assert!(!index_path.exists());
-    assert_eq!(registry_head(&root), initial_head);
+    assert!(!root.join(".git").exists());
 
     batch.commit();
 
-    assert_registry_commit(&root, initial_head);
+    assert!(!root.join(".git").exists());
     let record: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(index_path).unwrap()).unwrap();
     assert_eq!(record["vers"], "1.0.0");
@@ -428,8 +432,10 @@ fn package_batch_groups_http_and_git_index_destinations() {
     let alternative_root = registry::alt_registry_path();
     let primary_index = primary_root.join("pr/im/primary-http");
     let alternative_index = alternative_root.join("al/te/alternative-git");
-    let primary_head = registry_head(&primary_root);
     let alternative_head = registry_head(&alternative_root);
+
+    assert!(primary_root.join("config.json").is_file());
+    assert!(!primary_root.join(".git").exists());
 
     let mut batch = PackageBatch::new();
     let primary_checksum = Package::new("primary-http", "1.0.0").publish_to(&mut batch);
@@ -439,12 +445,12 @@ fn package_batch_groups_http_and_git_index_destinations() {
 
     assert!(!primary_index.exists());
     assert!(!alternative_index.exists());
-    assert_eq!(registry_head(&primary_root), primary_head);
+    assert!(!primary_root.join(".git").exists());
     assert_eq!(registry_head(&alternative_root), alternative_head);
 
     batch.commit();
 
-    assert_registry_commit(&primary_root, primary_head);
+    assert!(!primary_root.join(".git").exists());
     assert_registry_commit(&alternative_root, alternative_head);
 
     let primary: serde_json::Value =

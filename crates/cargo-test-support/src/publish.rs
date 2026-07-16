@@ -259,11 +259,18 @@ pub(crate) fn create_index_line(
     json.to_string()
 }
 
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+enum IndexBackend {
+    Git,
+    Sparse,
+    Local,
+}
+
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
 struct IndexFile {
     registry_path: PathBuf,
     relative_path: String,
-    local: bool,
+    backend: IndexBackend,
 }
 
 pub(crate) struct PendingIndexUpdate {
@@ -273,11 +280,19 @@ pub(crate) struct PendingIndexUpdate {
 
 impl PendingIndexUpdate {
     pub(crate) fn new(registry_path: PathBuf, name: &str, line: String, local: bool) -> Self {
+        let backend = if local {
+            IndexBackend::Local
+        } else if registry_path.join(registry::SPARSE_INDEX_MARKER).is_file() {
+            IndexBackend::Sparse
+        } else {
+            // Git remains the default so missing sparse metadata fails loudly.
+            IndexBackend::Git
+        };
         Self {
             index_file: IndexFile {
                 registry_path,
                 relative_path: cargo_util::registry::make_dep_path(name, false),
-                local,
+                backend,
             },
             line,
         }
@@ -315,7 +330,10 @@ fn write_index_updates_inner(
 
     let mut repositories = BTreeMap::<PathBuf, git2::Repository>::new();
     if reject_staged_changes {
-        for index_file in index_files.keys().filter(|index_file| !index_file.local) {
+        for index_file in index_files
+            .keys()
+            .filter(|index_file| index_file.backend == IndexBackend::Git)
+        {
             if repositories.contains_key(&index_file.registry_path) {
                 continue;
             }
@@ -341,15 +359,14 @@ fn write_index_updates_inner(
         IndexFile {
             registry_path,
             relative_path,
-            local,
+            backend,
         },
         lines,
     ) in index_files
     {
-        let dst = if local {
-            registry_path.join("index").join(&relative_path)
-        } else {
-            registry_path.join(&relative_path)
+        let dst = match backend {
+            IndexBackend::Local => registry_path.join("index").join(&relative_path),
+            IndexBackend::Git | IndexBackend::Sparse => registry_path.join(&relative_path),
         };
         let mut contents = fs::read_to_string(&dst).unwrap_or_default();
         for line in lines {
@@ -359,7 +376,7 @@ fn write_index_updates_inner(
         t!(fs::create_dir_all(dst.parent().unwrap()));
         t!(fs::write(&dst, contents));
 
-        if !local {
+        if backend == IndexBackend::Git {
             git_updates
                 .entry(registry_path)
                 .or_default()
