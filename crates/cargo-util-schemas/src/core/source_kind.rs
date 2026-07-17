@@ -15,6 +15,8 @@ pub enum SourceKind {
     LocalRegistry,
     /// A directory-based registry.
     Directory,
+    /// A patched source (unstable).
+    Patched(PatchChecksum),
 }
 
 // The hash here is important for what folder packages get downloaded into.
@@ -24,8 +26,10 @@ pub enum SourceKind {
 impl std::hash::Hash for SourceKind {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         core::mem::discriminant(self).hash(state);
-        if let SourceKind::Git(git) = self {
-            git.hash(state);
+        match self {
+            SourceKind::Git(git) => git.hash(state),
+            SourceKind::Patched(cksum) => cksum.hash(state),
+            _ => {}
         }
     }
 }
@@ -40,6 +44,7 @@ impl SourceKind {
             SourceKind::SparseRegistry => None,
             SourceKind::LocalRegistry => Some("local-registry"),
             SourceKind::Directory => Some("directory"),
+            SourceKind::Patched(_) => Some("patched"),
         }
     }
 }
@@ -71,6 +76,10 @@ impl Ord for SourceKind {
             (_, SourceKind::Directory) => Ordering::Greater,
 
             (SourceKind::Git(a), SourceKind::Git(b)) => a.cmp(b),
+            (SourceKind::Git(_), _) => Ordering::Less,
+            (_, SourceKind::Git(_)) => Ordering::Greater,
+
+            (SourceKind::Patched(a), SourceKind::Patched(b)) => a.cmp(b),
         }
     }
 }
@@ -160,5 +169,34 @@ impl<'a> std::fmt::Display for PrettyRef<'a> {
             write!(f, "{value}")?;
         }
         Ok(())
+    }
+}
+
+/// Content-based checksum of all patch files.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PatchChecksum(String);
+
+impl PatchChecksum {
+    /// Query string key in Source URL
+    pub const KEY: &str = "patch-cksum";
+
+    pub fn new(cksum: impl Into<String>) -> PatchChecksum {
+        PatchChecksum(cksum.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Collects patch checksum from query string.
+    pub fn from_query(
+        query_pairs: impl Iterator<Item = (impl AsRef<str>, impl AsRef<str>)>,
+    ) -> Option<PatchChecksum> {
+        for (k, v) in query_pairs {
+            if k.as_ref() == Self::KEY {
+                return Some(Self(v.as_ref().to_owned()));
+            }
+        }
+        None
     }
 }
