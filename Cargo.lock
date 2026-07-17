@@ -394,6 +394,7 @@ dependencies = [
  "crates-io",
  "curl",
  "curl-sys",
+ "diffy",
  "filetime",
  "flate2",
  "futures",
@@ -1144,6 +1145,16 @@ checksum = "ab63b0e2bf4d5928aff72e83a7dace85d7bba5fe12dcc3c5a572d78caffd3f3c"
 dependencies = [
  "derive_builder_core",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "diffy"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05264ab2aab4fb952fc4b0f3f6eff1ddfb4563064053a4ea174d91537584a769"
+dependencies = [
+ "hashbrown 0.17.1",
+ "zlib-rs",
 ]
 
 [[package]]
