@@ -7,7 +7,10 @@ use std::{cmp::Ordering, str::FromStr};
 use serde::{Deserialize, Serialize, de, ser};
 use url::Url;
 
-use crate::core::{GitReference, SourceKind};
+use crate::core::GitReference;
+use crate::core::PatchChecksum;
+use crate::core::SourceKind;
+use crate::url_ext::UrlExt as _;
 
 /// Serialization of `Cargo.lock`
 #[derive(Serialize, Deserialize, Debug)]
@@ -103,20 +106,20 @@ pub struct TomlLockfileSourceId {
 }
 
 impl TomlLockfileSourceId {
-    pub fn new(source: String) -> Result<Self, TomlLockfileSourceIdError> {
-        let source_str = source.clone();
-        let (kind, url) = source
+    pub fn new(source_str: String) -> Result<Self, TomlLockfileSourceIdError> {
+        let (kind, url) = source_str
             .split_once('+')
-            .ok_or_else(|| TomlLockfileSourceIdErrorKind::InvalidSource(source.clone()))?;
+            .ok_or_else(|| TomlLockfileSourceIdErrorKind::InvalidSource(source_str.clone()))?;
 
         // Sparse URLs store the kind prefix (sparse+) in the URL. Therefore, for sparse kinds, we
         // want to use the raw `source` instead of the split `url`.
-        let url = Url::parse(if kind == "sparse" { &source } else { url }).map_err(|msg| {
-            TomlLockfileSourceIdErrorKind::InvalidUrl {
-                url: url.to_string(),
-                msg: msg.to_string(),
-            }
-        })?;
+        let mut url =
+            Url::parse(if kind == "sparse" { &source_str } else { url }).map_err(|msg| {
+                TomlLockfileSourceIdErrorKind::InvalidUrl {
+                    url: url.to_string(),
+                    msg: msg.to_string(),
+                }
+            })?;
 
         let kind = match kind {
             "git" => {
@@ -126,6 +129,22 @@ impl TomlLockfileSourceId {
             "registry" => SourceKind::Registry,
             "sparse" => SourceKind::SparseRegistry,
             "path" => SourceKind::Path,
+            "patched" => {
+                let Some(cksum) = PatchChecksum::from_query(url.query_pairs()) else {
+                    let url = url.to_string();
+                    let msg = format!("missing query string `{}`", PatchChecksum::KEY);
+                    return Err(TomlLockfileSourceIdErrorKind::InvalidUrl { url, msg }.into());
+                };
+
+                // Remove patch-cksum from URL for inner source
+                url.remove_query_params(&[PatchChecksum::KEY]);
+                if let Err(e) = Self::new(url.to_string()) {
+                    let url = url.to_string();
+                    let msg = e.to_string();
+                    return Err(TomlLockfileSourceIdErrorKind::InvalidUrl { url, msg }.into());
+                }
+                SourceKind::Patched(cksum)
+            }
             kind => {
                 return Err(
                     TomlLockfileSourceIdErrorKind::UnsupportedSource(kind.to_string()).into(),
@@ -326,8 +345,11 @@ fn dump_lockfile_schema() {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::{GitReference, SourceKind};
-    use crate::lockfile::{TomlLockfileSourceId, TomlLockfileSourceIdErrorKind};
+    use crate::core::GitReference;
+    use crate::core::PatchChecksum;
+    use crate::core::SourceKind;
+    use crate::lockfile::TomlLockfileSourceId;
+    use crate::lockfile::TomlLockfileSourceIdErrorKind;
 
     #[track_caller]
     fn ok(source_str: &str, source_kind: SourceKind, url: &str) {
@@ -385,6 +407,16 @@ mod tests {
             SourceKind::Path,
             "file:///path/to/root",
         );
+        ok(
+            "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=abc123",
+            SourceKind::Patched(PatchChecksum::new("abc123")),
+            "registry+https://github.com/rust-lang/crates.io-index",
+        );
+        ok(
+            "patched+git+https://github.com/foo/bar?branch=main&patch-cksum=def456",
+            SourceKind::Patched(PatchChecksum::new("def456")),
+            "git+https://github.com/foo/bar?branch=main",
+        );
     }
 
     #[test]
@@ -400,6 +432,14 @@ mod tests {
         err!(
             "https//github.com/rust-lang/crates.io-index",
             TomlLockfileSourceIdErrorKind::InvalidSource(..)
+        );
+        err!(
+            "patched+registry+https://github.com/rust-lang/crates.io-index",
+            TomlLockfileSourceIdErrorKind::InvalidUrl { .. }
+        );
+        err!(
+            "patched+https://example.com?patch-cksum=abc123",
+            TomlLockfileSourceIdErrorKind::InvalidUrl { .. }
         );
     }
 }

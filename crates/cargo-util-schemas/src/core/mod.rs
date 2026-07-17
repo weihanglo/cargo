@@ -7,4 +7,5 @@ pub use package_id_spec::PackageIdSpecError;
 pub use partial_version::PartialVersion;
 pub use partial_version::PartialVersionError;
 pub use source_kind::GitReference;
+pub use source_kind::PatchChecksum;
 pub use source_kind::SourceKind;
