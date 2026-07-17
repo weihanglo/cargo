@@ -15,5 +15,6 @@ pub mod manifest;
 pub mod messages;
 #[cfg(feature = "unstable-schema")]
 pub mod schema;
+pub mod url_ext;
 
 mod restricted_names;
