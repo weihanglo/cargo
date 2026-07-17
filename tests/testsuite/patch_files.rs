@@ -180,12 +180,12 @@ fn disallow_non_exact_version() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` in `registry `crates-io`` resolved to more than one candidate
+[NOTE] found versions: 1.0.0, 1.1.0
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[HELP] select only one package using `version = "=1.1.0"`
 
 "#]])
         .run();
@@ -218,12 +218,10 @@ fn disallow_empty_patches_array() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .run();
@@ -256,15 +254,17 @@ fn disallow_mismatched_source_url() {
     p.cargo("check")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `alternative` index
+[UPDATING] `dummy-registry` index
+[LOCKING] 1 package to latest compatible version
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `alternative`)
+[CHECKING] bar v1.0.0 (registry `alternative`)
+[CHECKING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
-        .with_status(101)
         .run();
 }
 
@@ -296,15 +296,14 @@ fn disallow_path_dep() {
     p.cargo("check")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] crates.io index
+[LOCKING] 1 package to latest compatible version
+[CHECKING] bar v1.0.0 ([ROOT]/foo/bar)
+[CHECKING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
-        .with_status(101)
         .run();
 }
 
@@ -341,15 +340,15 @@ fn disallow_git_dep() {
     p.cargo("check")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] git repository `[ROOTURL]/bar`
+[UPDATING] crates.io index
+[LOCKING] 1 package to latest compatible version
+[CHECKING] bar v1.0.0 ([ROOTURL]/bar#[..])
+[CHECKING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
-        .with_status(101)
         .run();
 }
 
@@ -360,12 +359,10 @@ fn patch() {
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_stdout_data(str![""])
@@ -411,19 +408,10 @@ fn patch_from_subdirectory() {
         .cwd(p.root().join("member"))
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed searching for potential workspace
-package manifest: `[ROOT]/foo/member/Cargo.toml`
-invalid potential workspace manifest: `[ROOT]/foo/Cargo.toml`
-
-[HELP] to avoid searching for a non-existent workspace, add `[workspace]` to the package manifest
-
-Caused by:
-  failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] [ROOT]/foo/Cargo.toml: unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_stdout_data(str![""])
@@ -460,10 +448,9 @@ fn patch_in_config() {
     p.cargo("run -Zpatch-files")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] unknown `-Z` flag specified: patch-files
-
-For available unstable features, see https://doc.rust-lang.org/nightly/cargo/reference/unstable.html
-If you intended to use an unstable rustc feature, try setting `RUSTFLAGS="-Zpatch-files"`
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/.cargo/config.toml`
 
 "#]])
         .with_stdout_data(str![""])
@@ -499,12 +486,10 @@ fn patch_for_alternative_registry() {
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.alternative.bar.patches
+[UPDATING] `alternative` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `[ROOTURL]/alternative-registry` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_stdout_data(str![""])
@@ -936,12 +921,10 @@ fn patch_cargo_toml_raises_rust_version_for_preferred_patch() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.higher-msrv.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `higher-msrv` points to the same source, but patches must point to different sources
+[HELP] check `higher-msrv` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .run();
@@ -995,12 +978,10 @@ fn patch_package_version() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .run();
@@ -1116,12 +1097,10 @@ fn multiple_patches() {
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_stdout_data(str![""])
@@ -1156,12 +1135,10 @@ fn patch_nonexistent_patch() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .run();
@@ -1174,12 +1151,10 @@ fn no_rebuild_if_no_patch_changed() {
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_stdout_data(str![""])
@@ -1189,12 +1164,10 @@ Caused by:
     p.cargo("run -v")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_stdout_data(str![""])
@@ -1209,12 +1182,10 @@ fn rebuild_if_patch_changed() {
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_stdout_data(str![""])
@@ -1237,12 +1208,10 @@ Caused by:
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_stdout_data(str![""])
@@ -1277,12 +1246,9 @@ fn re_resolve_if_patch_removed_from_manifest() {
     p.cargo("generate-lockfile")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_status(101)
@@ -1296,12 +1262,9 @@ fn cargo_pkgid() {
     p.cargo("generate-lockfile")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_status(101)
@@ -1342,12 +1305,10 @@ fn track_unused_in_lockfile() {
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_status(101)
@@ -1361,12 +1322,9 @@ fn cargo_metadata() {
     p.cargo("generate-lockfile")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_status(101)
@@ -1375,12 +1333,10 @@ Caused by:
     p.cargo("metadata")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] please specify `--format-version` flag explicitly to avoid compatibility problems
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_status(101)
@@ -1415,12 +1371,10 @@ fn empty_patch_file_error() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .run();
@@ -1478,12 +1432,10 @@ In a hole in the ground there lived a hobbit
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.crates-io.bar.patches
+[UPDATING] `dummy-registry` index
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_stdout_data(str![""])
@@ -1537,12 +1489,10 @@ fn patch_git_source() {
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.[ROOTURL]/bar.bar.patches
+[UPDATING] git repository `[ROOTURL]/bar`
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `[ROOTURL]/bar` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .with_stdout_data(str![""])
@@ -1600,12 +1550,10 @@ fn patch_git_source_rejects_symlink_escape() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.[ROOTURL]/bar.bar.patches
+[UPDATING] git repository `[ROOTURL]/bar`
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `[ROOTURL]/bar` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .run();
@@ -1746,12 +1694,11 @@ fn patch_git_same_patches_reused() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(
             str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.[ROOTURL]/my-workspace.bar.patches
+[WARNING] unused manifest key: patch.[ROOTURL]/my-workspace.baz.patches
+[UPDATING] git repository `[ROOTURL]/my-workspace`
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `[ROOTURL]/my-workspace` in `[ROOT]/foo/Cargo.toml`
 
 "#]]
             .unordered(),
@@ -1811,12 +1758,11 @@ fn patch_git_conflicting_patches_error() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
-
-Caused by:
-  unknown Cargo.toml feature `patch-files`
-
-  See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html for more information.
+[WARNING] unused manifest key: patch.[ROOTURL]/my-workspace.bar.patches
+[WARNING] unused manifest key: patch.[ROOTURL]/my-workspace.baz.patches
+[UPDATING] git repository `[ROOTURL]/my-workspace`
+[ERROR] patch for `bar` points to the same source, but patches must point to different sources
+[HELP] check `bar` patch definition for `[ROOTURL]/my-workspace` in `[ROOT]/foo/Cargo.toml`
 
 "#]])
         .run();
