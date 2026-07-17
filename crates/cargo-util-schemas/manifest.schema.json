@@ -895,6 +895,16 @@
             "null"
           ]
         },
+        "patches": {
+          "description": "`patches = [<path>, ...]` for specifying patch files (unstable).\n\nPaths of patches are relative to the file it appears in.\nIf that's a `Cargo.toml`,\nthey'll be relative to that TOML file;\nif it's a Cargo configuration, they'll be config-relative path.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
         "public": {
           "type": [
             "boolean",

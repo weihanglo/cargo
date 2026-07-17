@@ -2425,6 +2425,7 @@ fn to_dependency_source_id<P: ResolveToPath + Clone>(
         default_features: _,
         default_features2: _,
         package: _,
+        patches: _,
         public: _,
         artifact: _,
         lib: _,
