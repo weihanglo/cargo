@@ -112,12 +112,15 @@
 //!   format.
 
 use super::{Resolve, ResolveVersion};
+use crate::util::CanonicalUrl;
 use crate::util::data_structures::{HashMap, HashSet};
 use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
 use crate::util::{Graph, internal};
+use crate::workspace::SourceKind;
 use crate::workspace::{Dependency, GitReference, Package, PackageId, Patch, SourceId, Workspace};
 use anyhow::{Context as _, bail};
+use cargo_util_schemas::core::PatchChecksum;
 use cargo_util_schemas::lockfile::{
     TomlLockfile, TomlLockfileDependency, TomlLockfilePackageId, TomlLockfilePatch,
     TomlLockfileSourceId,
@@ -139,6 +142,7 @@ pub fn into_resolve(
     ws: &Workspace<'_>,
 ) -> CargoResult<Resolve> {
     let path_deps: HashMap<String, HashMap<semver::Version, SourceId>> = build_path_deps(ws)?;
+    let patched_deps = build_patched_deps(ws)?;
     let mut checksums = HashMap::default();
 
     let mut version = match resolve.version {
@@ -186,17 +190,15 @@ pub fn into_resolve(
             if !all_pkgs.insert(enc_id.clone()) {
                 anyhow::bail!("package `{}` is specified twice in the lockfile", pkg.name);
             }
-            let id = match pkg
-                .source
-                .as_ref()
-                .map(|source| SourceId::from_url(&source.source_str()))
-                .transpose()?
-                .or_else(|| get_source_id(&path_deps, &pkg).copied())
-            {
+            let source_id = match &pkg.source {
+                Some(source) => source_id_from_lockfile(source, &patched_deps)?,
+                None => get_source_id(&path_deps, &pkg).copied(),
+            };
+            let id = match source_id {
                 // We failed to find a local package in the workspace.
                 // It must have been removed and should be ignored.
                 None => {
-                    debug!("path dependency now missing {} v{}", pkg.name, pkg.version);
+                    debug!("dependency now missing {} v{}", pkg.name, pkg.version);
                     continue;
                 }
                 Some(source) => PackageId::try_new(&pkg.name, &pkg.version, source)?,
@@ -356,13 +358,11 @@ pub fn into_resolve(
 
     let mut unused_patches = Vec::new();
     for pkg in resolve.patch.unused {
-        let id = match pkg
-            .source
-            .as_ref()
-            .map(|source| SourceId::from_url(&source.source_str()))
-            .transpose()?
-            .or_else(|| get_source_id(&path_deps, &pkg).copied())
-        {
+        let source_id = match &pkg.source {
+            Some(source) => source_id_from_lockfile(source, &patched_deps)?,
+            None => get_source_id(&path_deps, &pkg).copied(),
+        };
+        let id = match source_id {
             Some(src) => PackageId::try_new(&pkg.name, &pkg.version, src)?,
             None => continue,
         };
@@ -425,6 +425,49 @@ pub fn into_resolve(
             None
         })
     }
+}
+
+/// Convert a lockfile source to a SourceId.
+fn source_id_from_lockfile(
+    source: &TomlLockfileSourceId,
+    patched_deps: &HashMap<(CanonicalUrl, PatchChecksum), SourceId>,
+) -> CargoResult<Option<SourceId>> {
+    match source.kind() {
+        SourceKind::Patched(cksum) => {
+            let canonical_url = CanonicalUrl::new(source.url())?;
+
+            // Patched source may no longer exist in the manifest.
+            // Return None so the resolver will re-resolve with current state.
+            Ok(patched_deps.get(&(canonical_url, cksum.clone())).copied())
+        }
+        _ => {
+            // For non-patched sources, use the standard from_url parsing
+            Ok(Some(SourceId::from_url(source.source_str())?))
+        }
+    }
+}
+
+/// Build a map of patched sources from the workspace manifest.
+///
+/// This is used to look up full patched SourceIds from `[patch]` sections
+/// in mainifest/config when parsing lockfile.
+/// since lockfile only stores checksums for patched sources.
+fn build_patched_deps(
+    ws: &Workspace<'_>,
+) -> CargoResult<HashMap<(CanonicalUrl, PatchChecksum), SourceId>> {
+    let mut ret = HashMap::default();
+
+    for (_url, patches) in ws.root_patch()?.iter() {
+        for Patch { dep, loc: _ } in patches {
+            let source_id = dep.source_id();
+            if let SourceKind::Patched(cksum) = source_id.kind() {
+                let canonical_url = CanonicalUrl::new(source_id.url())?;
+                ret.insert((canonical_url, cksum.clone()), source_id);
+            }
+        }
+    }
+
+    Ok(ret)
 }
 
 fn build_path_deps(
