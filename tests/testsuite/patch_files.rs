@@ -3,6 +3,7 @@
 use crate::prelude::*;
 use cargo_test_support::Project;
 use cargo_test_support::basic_manifest;
+use cargo_test_support::compare::assert_e2e;
 use cargo_test_support::git;
 use cargo_test_support::paths;
 use cargo_test_support::prelude::*;
@@ -69,6 +70,8 @@ fn gated_manifest() {
     p.cargo("check")
         .with_status(101)
         .with_stderr_data(str![[r#"
+[WARNING] Cargo.toml: ignoring `patches` on patch for `bar` in `https://github.com/rust-lang/crates.io-index`, requires `-Zpatch-files`
+[WARNING] `foo` (manifest) generated 1 warning
 [UPDATING] `dummy-registry` index
 [ERROR] patch for `bar` points to the same source, but patches must point to different sources
 [HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
@@ -108,6 +111,9 @@ fn gated_config() {
     p.cargo("check")
         .with_status(101)
         .with_stderr_data(str![[r#"
+[WARNING] Cargo.toml: ignoring `patches` on patch for `bar` in `https://github.com/rust-lang/crates.io-index`, requires `-Zpatch-files`
+[WARNING] `foo` (manifest) generated 1 warning
+[WARNING] [patch] in cargo config: ignoring `patches` on patch for `bar` in `https://github.com/rust-lang/crates.io-index`, requires `-Zpatch-files`
 [UPDATING] `dummy-registry` index
 [ERROR] patch for `bar` points to the same source, but patches must point to different sources
 [HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/.cargo/config.toml`
@@ -178,10 +184,13 @@ fn disallow_non_exact_version() {
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` in `registry `crates-io`` resolved to more than one candidate
-[NOTE] found versions: 1.0.0, 1.1.0
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
-[HELP] select only one package using `version = "=1.1.0"`
+[ERROR] failed to load source for dependency `bar`
+
+Caused by:
+  unable to update from crates-io with patch 46806b94
+
+Caused by:
+  patch for `bar` matched 2 candidates, but patches must match exactly one candidate
 
 "#]])
         .run();
@@ -214,9 +223,10 @@ fn disallow_empty_patches_array() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  patch for `bar` in `https://github.com/rust-lang/crates.io-index` requires at least one patch file when patching with files
 
 "#]])
         .run();
@@ -248,15 +258,12 @@ fn disallow_mismatched_source_url() {
 
     p.cargo("check")
         .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_status(101)
         .with_stderr_data(str![[r#"
-[UPDATING] `alternative` index
-[UPDATING] `dummy-registry` index
-[LOCKING] 1 package to latest compatible version
-[DOWNLOADING] crates ...
-[DOWNLOADED] bar v1.0.0 (registry `alternative`)
-[CHECKING] bar v1.0.0 (registry `alternative`)
-[CHECKING] foo v0.0.0 ([ROOT]/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  patch for `bar` in `https://github.com/rust-lang/crates.io-index` requires at least one patch file when patching with files
 
 "#]])
         .run();
@@ -289,12 +296,13 @@ fn disallow_path_dep() {
 
     p.cargo("check")
         .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_status(101)
         .with_stderr_data(str![[r#"
-[UPDATING] crates.io index
-[LOCKING] 1 package to latest compatible version
-[CHECKING] bar v1.0.0 ([ROOT]/foo/bar)
-[CHECKING] foo v0.0.0 ([ROOT]/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  patch for `bar` in `https://github.com/rust-lang/crates.io-index` cannot use `patches` with a path dependency
+  [HELP] apply the patch to the source directly, or copy the source to a separate directory
 
 "#]])
         .run();
@@ -332,13 +340,18 @@ fn disallow_git_dep() {
 
     p.cargo("check")
         .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_status(101)
         .with_stderr_data(str![[r#"
-[UPDATING] git repository `[ROOTURL]/bar`
-[UPDATING] crates.io index
-[LOCKING] 1 package to latest compatible version
-[CHECKING] bar v1.0.0 ([ROOTURL]/bar#[..])
-[CHECKING] foo v0.0.0 ([ROOT]/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  failed to checksum [ROOT]/foo
+
+Caused by:
+  failed to read `[ROOT]/foo`
+
+Caused by:
+  Is a directory (os error 21)
 
 "#]])
         .run();
@@ -352,13 +365,42 @@ fn patch() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[LOCKING] 1 package to latest compatible version
+[COMPILING] bar v1.0.0 (from crates-io with patch 46806b94)
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `target/debug/foo`
 
 "#]])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello, patched!
+
+"#]])
         .run();
+
+    let actual = p.read_lockfile();
+    let expected = str![[r##"
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "bar"
+version = "1.0.0"
+source = "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=46806b943777e31efd3c0708a98bb6b19d369d3036766ef2b2f27d7c236ff68c"
+
+[[package]]
+name = "foo"
+version = "0.0.0"
+dependencies = [
+ "bar",
+]
+
+"##]];
+    assert_e2e().eq(actual, expected);
 }
 
 #[cargo_test]
@@ -400,12 +442,20 @@ fn patch_from_subdirectory() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[LOCKING] 1 package to latest compatible version
+[COMPILING] bar v1.0.0 (from crates-io with patch 46806b94)
+[COMPILING] member v0.0.0 ([ROOT]/foo/member)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `[ROOT]/foo/target/debug/member`
 
 "#]])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello, patched!
+
+"#]])
         .run();
 }
 
@@ -439,12 +489,20 @@ fn patch_in_config() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/.cargo/config.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[LOCKING] 1 package to latest compatible version
+[COMPILING] bar v1.0.0 (from crates-io with patch 46806b94)
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `target/debug/foo`
 
 "#]])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello, patched!
+
+"#]])
         .run();
 }
 
@@ -477,12 +535,20 @@ fn patch_for_alternative_registry() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `alternative` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `[ROOTURL]/alternative-registry` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `alternative`)
+[PATCHING] bar v1.0.0 (registry `alternative`)
+[LOCKING] 1 package to latest compatible version
+[COMPILING] bar v1.0.0 (from alternative with patch 46806b94)
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `target/debug/foo`
 
 "#]])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello, patched!
+
+"#]])
         .run();
 }
 
@@ -535,8 +601,10 @@ fn patch_transitive_dep() {
 
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+2
+
+"#]])
         .run();
 }
 
@@ -592,8 +660,10 @@ pub fn hello() {
 
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello, feature patched!
+
+"#]])
         .run();
 }
 
@@ -655,8 +725,10 @@ pub fn hello() {
 
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello from baz!
+
+"#]])
         .run();
 }
 
@@ -753,8 +825,10 @@ lower-msrv 1.0.0
 
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+lower-msrv 1.1.0
+
+"#]])
         .run();
 }
 
@@ -851,8 +925,10 @@ higher-msrv 1.1.0
 
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+higher-msrv 1.0.0
+
+"#]])
         .run();
 }
 
@@ -911,8 +987,17 @@ fn patch_cargo_toml_raises_rust_version_for_preferred_patch() {
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `higher-msrv` points to the same source, but patches must point to different sources
-[HELP] check `higher-msrv` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] higher-msrv v1.1.0 (registry `dummy-registry`)
+[PATCHING] higher-msrv v1.1.0
+[LOCKING] 1 package to latest Rust 1.85.0 compatible version
+[ADDING] higher-msrv v1.1.0 (from crates-io with patch [..]) (requires Rust 1.999.0)
+[ERROR] rustc [..] is not supported by the following package:
+  higher-msrv@1.1.0 requires rustc 1.999.0
+Either upgrade rustc or select compatible dependency versions with
+`cargo update <name>@<current-ver> --precise <compatible-ver>`
+where `<compatible-ver>` is the latest version supporting rustc [..]
+
 
 "#]])
         .run();
@@ -967,8 +1052,17 @@ fn patch_package_version() {
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[ERROR] failed to load source for dependency `bar`
+
+Caused by:
+  unable to update from crates-io with patch e84fb415
+
+Caused by:
+  patch for `bar` must not change the package name or version
+  [NOTE] original package is `bar v1.0.0`, but after patching it became `bar v2.0.0 (from crates-io with patch e84fb415)`
 
 "#]])
         .run();
@@ -1040,8 +1134,10 @@ fn patches_for_multiple_versions_of_same_package_are_isolated() {
 
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+patched-0.1.0 patched-0.2.0
+
+"#]])
         .run();
 }
 
@@ -1085,13 +1181,43 @@ fn multiple_patches() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[LOCKING] 1 package to latest compatible version
+[COMPILING] bar v1.0.0 (from crates-io with patch 999bb70f)
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `target/debug/foo`
 
 "#]])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello, patched!
+¡Hola, patched!
+
+"#]])
         .run();
+
+    let actual = p.read_lockfile();
+    let expected = str![[r##"
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "bar"
+version = "1.0.0"
+source = "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=999bb70f0e374dc7c713e0c2a44147442f96ab022b9bc898235f2fd6cbd7b66d"
+
+[[package]]
+name = "foo"
+version = "0.0.0"
+dependencies = [
+ "bar",
+]
+
+"##]];
+    assert_e2e().eq(actual, expected);
 }
 
 #[cargo_test]
@@ -1121,9 +1247,16 @@ fn patch_nonexistent_patch() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  failed to checksum [ROOT]/foo/patches/hello.patch
+
+Caused by:
+  failed to open file `[ROOT]/foo/patches/hello.patch`
+
+Caused by:
+  [NOT_FOUND]
 
 "#]])
         .run();
@@ -1137,24 +1270,36 @@ fn no_rebuild_if_no_patch_changed() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[LOCKING] 1 package to latest compatible version
+[COMPILING] bar v1.0.0 (from crates-io with patch 46806b94)
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `target/debug/foo`
 
 "#]])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello, patched!
+
+"#]])
         .run();
 
     p.cargo("run -v")
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[FRESH] bar v1.0.0 (from crates-io with patch 46806b94)
+[FRESH] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `target/debug/foo[EXE]`
 
 "#]])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello, patched!
+
+"#]])
         .run();
 }
 
@@ -1166,12 +1311,20 @@ fn rebuild_if_patch_changed() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[LOCKING] 1 package to latest compatible version
+[COMPILING] bar v1.0.0 (from crates-io with patch 46806b94)
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `target/debug/foo`
 
 "#]])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello, patched!
+
+"#]])
         .run();
 
     p.change_file(
@@ -1191,12 +1344,19 @@ fn rebuild_if_patch_changed() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[PATCHING] bar v1.0.0
+[LOCKING] 1 package to latest compatible version
+[ADDING] bar v1.0.0 (from crates-io with patch 88122499)
+[COMPILING] bar v1.0.0 (from crates-io with patch 88122499)
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `target/debug/foo`
 
 "#]])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+¡Hola, patched!
+
+"#]])
         .run();
 }
 
@@ -1226,14 +1386,23 @@ fn re_resolve_if_patch_removed_from_manifest() {
 
     p.cargo("generate-lockfile")
         .masquerade_as_nightly_cargo(&["patch-files"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
-
-"#]])
-        .with_status(101)
         .run();
+    assert!(p.read_lockfile().contains("patched+registry+"));
+
+    p.change_file(
+        "Cargo.toml",
+        r#"
+            [package]
+            name = "foo"
+            edition = "2015"
+
+            [dependencies]
+            bar = "1"
+        "#,
+    );
+
+    p.cargo("check").run();
+    assert!(!p.read_lockfile().contains("patched+registry+"));
 }
 
 #[cargo_test]
@@ -1244,17 +1413,20 @@ fn cargo_pkgid() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[LOCKING] 1 package to latest compatible version
 
 "#]])
-        .with_status(101)
         .run();
 
     p.cargo("pkgid bar")
         .masquerade_as_nightly_cargo(&["patch-files"])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=46806b943777e31efd3c0708a98bb6b19d369d3036766ef2b2f27d7c236ff68c#bar@1.0.0
+
+"#]])
         .run();
 }
 
@@ -1287,12 +1459,51 @@ fn track_unused_in_lockfile() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[WARNING] patch `bar v1.0.0 (from crates-io with patch 46806b94)` was not used in the crate graph
+[HELP] Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+[LOCKING] 1 package to latest compatible version
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v2.0.0 (registry `dummy-registry`)
+[COMPILING] bar v2.0.0
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `target/debug/foo[EXE]`
 
 "#]])
-        .with_status(101)
         .run();
+
+    let actual = p.read_lockfile();
+    let expected = str![[r##"
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "bar"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a184cee92224be6149c9e218327188d1d74a4514f971b1e3ce0170ea94ea5da7"
+
+[[package]]
+name = "foo"
+version = "0.0.0"
+dependencies = [
+ "bar",
+]
+
+[[patch.unused]]
+name = "bar"
+version = "1.0.0"
+source = "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=46806b943777e31efd3c0708a98bb6b19d369d3036766ef2b2f27d7c236ff68c"
+
+"##]];
+    assert_e2e().eq(actual, expected);
 }
 
 #[cargo_test]
@@ -1303,23 +1514,59 @@ fn cargo_metadata() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[LOCKING] 1 package to latest compatible version
 
 "#]])
-        .with_status(101)
         .run();
 
     p.cargo("metadata")
         .masquerade_as_nightly_cargo(&["patch-files"])
-        .with_stderr_data(str![[r#"
-[WARNING] please specify `--format-version` flag explicitly to avoid compatibility problems
-[UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
-
-"#]])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+{
+  "...": "{...}",
+  "packages": [
+    {
+      "...": "{...}",
+      "id": "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=46806b943777e31efd3c0708a98bb6b19d369d3036766ef2b2f27d7c236ff68c#bar@1.0.0",
+      "manifest_path": "[ROOT]/home/.cargo/patched-src/github.com-[HASH]/bar-1.0.0/46806b94/Cargo.toml",
+      "source": "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=46806b943777e31efd3c0708a98bb6b19d369d3036766ef2b2f27d7c236ff68c",
+      "targets": [
+        {
+          "...": "{...}",
+          "src_path": "[ROOT]/home/.cargo/patched-src/github.com-[HASH]/bar-1.0.0/46806b94/src/lib.rs"
+        }
+      ]
+    },
+    "{...}"
+  ],
+  "resolve": {
+    "...": "{...}",
+    "nodes": [
+      {
+        "...": "{...}",
+        "id": "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=46806b943777e31efd3c0708a98bb6b19d369d3036766ef2b2f27d7c236ff68c#bar@1.0.0"
+      },
+      {
+        "...": "{...}",
+        "dependencies": [
+          "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=46806b943777e31efd3c0708a98bb6b19d369d3036766ef2b2f27d7c236ff68c#bar@1.0.0"
+        ],
+        "deps": [
+          {
+            "...": "{...}",
+            "pkg": "patched+registry+https://github.com/rust-lang/crates.io-index?patch-cksum=46806b943777e31efd3c0708a98bb6b19d369d3036766ef2b2f27d7c236ff68c#bar@1.0.0"
+          }
+        ]
+      }
+    ]
+  }
+}
+"#]]
+            .is_json(),
+)
         .run();
 }
 
@@ -1352,8 +1599,16 @@ fn empty_patch_file_error() {
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[ERROR] failed to load source for dependency `bar`
+
+Caused by:
+  unable to update from crates-io with patch e3b0c442
+
+Caused by:
+  error parsing patches at byte 0: no valid patches found
 
 "#]])
         .run();
@@ -1412,12 +1667,20 @@ In a hole in the ground there lived a hobbit
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `https://github.com/rust-lang/crates.io-index` in `[ROOT]/foo/Cargo.toml`
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[PATCHING] bar v1.0.0
+[LOCKING] 1 package to latest compatible version
+[COMPILING] bar v1.0.0 (from crates-io with patch f315317f)
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `target/debug/foo`
 
 "#]])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+The ring is destroyed!
+
+"#]])
         .run();
 }
 
@@ -1468,13 +1731,24 @@ fn patch_git_source() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/bar`
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `[ROOTURL]/bar` in `[ROOT]/foo/Cargo.toml`
+[PATCHING] bar v1.0.0 ([ROOTURL]/bar#[..])
+[UPDATING] git repository `[ROOTURL]/bar`
+[LOCKING] 1 package to latest compatible version
+[COMPILING] bar v1.0.0 (from git+[ROOTURL]/bar with patch b0d23d81)
+[COMPILING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[RUNNING] `target/debug/foo`
 
 "#]])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello from patched git!
+
+"#]])
         .run();
+
+    let lockfile = p.read_lockfile();
+    assert!(lockfile.contains("source = \"patched+git+"));
+    assert!(lockfile.contains("patch-cksum="));
 }
 
 #[cargo_test]
@@ -1528,8 +1802,15 @@ fn patch_git_source_rejects_symlink_escape() {
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/bar`
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `[ROOTURL]/bar` in `[ROOT]/foo/Cargo.toml`
+[ERROR] failed to load source for dependency `bar`
+
+Caused by:
+  unable to update from git+[ROOTURL]/bar with patch b0d23d81
+
+Caused by:
+  patched source symlink `[..]leak.txt` points outside source root
+  [NOTE] symlink target resolves to `[..]`
+  [HELP] replace the symlink with a copy of the target file
 
 "#]])
         .run();
@@ -1600,8 +1881,10 @@ fn patch_git_workspace_inheritance() {
 
     p.cargo("run")
         .masquerade_as_nightly_cargo(&["patch-files"])
-        .with_stdout_data(str![""])
-        .with_status(101)
+        .with_stdout_data(str![[r#"
+Hello from patched git workspace!
+
+"#]])
         .run();
 }
 
@@ -1671,13 +1954,17 @@ fn patch_git_same_patches_reused() {
         .with_stderr_data(
             str![[r#"
 [UPDATING] git repository `[ROOTURL]/my-workspace`
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `[ROOTURL]/my-workspace` in `[ROOT]/foo/Cargo.toml`
+[PATCHING] bar v1.0.0 ([ROOTURL]/my-workspace#[..])
+[UPDATING] git repository `[ROOTURL]/my-workspace`
+[LOCKING] 2 packages to latest compatible versions
+[CHECKING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[CHECKING] baz v1.0.0 (from git+[ROOTURL]/my-workspace with patch 0f89441a)
+[CHECKING] bar v1.0.0 (from git+[ROOTURL]/my-workspace with patch 0f89441a)
 
 "#]]
             .unordered(),
         )
-        .with_status(101)
         .run();
 }
 
@@ -1732,9 +2019,9 @@ fn patch_git_conflicting_patches_error() {
         .masquerade_as_nightly_cargo(&["patch-files"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[UPDATING] git repository `[ROOTURL]/my-workspace`
-[ERROR] patch for `bar` points to the same source, but patches must point to different sources
-[HELP] check `bar` patch definition for `[ROOTURL]/my-workspace` in `[ROOT]/foo/Cargo.toml`
+[ERROR] conflicting patch files for git repository `[ROOTURL]/my-workspace`
+[NOTE] `bar` and `baz` use different patches
+[HELP] all packages from the same git repository must use identical patch files
 
 "#]])
         .run();
