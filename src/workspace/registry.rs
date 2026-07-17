@@ -20,6 +20,7 @@ use crate::sources::source::SourceMap;
 use crate::util::errors::CargoResult;
 use crate::util::interning::InternedString;
 use crate::util::{CanonicalUrl, GlobalContext};
+use crate::workspace::SourceKind;
 use crate::workspace::{Dependency, PackageId, PackageSet, Patch, SourceId, Summary};
 use anyhow::Context as _;
 use cargo_util_terminal::report::Level;
@@ -432,7 +433,12 @@ impl<'gctx> PackageRegistry<'gctx> {
                 unlock_patches.push(((*orig_patch).clone(), unlock_id));
             }
 
-            if *summary.package_id().source_id().canonical_url() == canonical {
+            // Only perform same-source check for non-patched sources.
+            // For patched sources,
+            // the canonical_url will match but kind is different.
+            let source_id = summary.package_id().source_id();
+            let is_patched = matches!(source_id.kind(), SourceKind::Patched(_));
+            if !is_patched && *source_id.canonical_url() == canonical {
                 return Err(anyhow::anyhow!(
                     "patch for `{}` points to the same source, but patches must point to different sources\n\
                     help: check `{}` patch definition for `{}` in `{}`",
