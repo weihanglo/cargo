@@ -9,8 +9,13 @@ use crate::util::{CanonicalUrl, CargoResult, GlobalContext, IntoUrl};
 use crate::workspace::GitReference;
 use crate::workspace::SourceKind;
 use anyhow::Context as _;
+use cargo_util_schemas::core::PatchChecksum;
+use cargo_util_schemas::url_ext::UrlExt as _;
 use serde::de;
 use serde::ser;
+use tracing::trace;
+use url::Url;
+
 use std::cmp::{self, Ordering};
 use std::fmt::{self, Formatter};
 use std::hash::{self, Hash};
@@ -18,8 +23,6 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use tracing::trace;
-use url::Url;
 
 static SOURCE_ID_CACHE: OnceLock<Mutex<HashSet<&'static SourceIdInner>>> = OnceLock::new();
 
@@ -175,6 +178,28 @@ impl SourceId {
             "path" => {
                 let url = url.into_url()?;
                 SourceId::new(SourceKind::Path, url, None)
+            }
+            "patched" => {
+                let mut url = url.into_url()?;
+
+                // Extract patch checksum from query
+                let Some(cksum) = PatchChecksum::from_query(url.query_pairs()) else {
+                    anyhow::bail!(
+                        "patched source URL missing `{}` query parameter: `{url}`",
+                        PatchChecksum::KEY
+                    )
+                };
+
+                // For patched source, we keep url with underlying source id url.
+                // This should generally be sync with PackageIdSpec.
+                url.remove_query_params(&[PatchChecksum::KEY]);
+
+                // Recursively parse it to ensure the underlying url is valid.
+                if let Err(e) = SourceId::from_url(url.as_str()) {
+                    anyhow::bail!("invalid patched source `{string}`: {e}");
+                }
+
+                SourceId::new(SourceKind::Patched(cksum), url, None)
             }
             kind => Err(anyhow::format_err!("unsupported source protocol: {}", kind)),
         }
@@ -669,7 +694,12 @@ impl fmt::Display for SourceId {
             }
             SourceKind::LocalRegistry => write!(f, "registry `{}`", url_display(&self.inner.url)),
             SourceKind::Directory => write!(f, "dir {}", url_display(&self.inner.url)),
-            SourceKind::Patched(_) => write!(f, "patched {}", url_display(&self.inner.url)),
+            SourceKind::Patched(ref cksum) => {
+                let cksum = cksum.as_str();
+                let cksum = &cksum[..cksum.len().min(8)];
+                let url = self.display_registry_name();
+                write!(f, "from {url} with patch {cksum}",)
+            }
         }
     }
 }
@@ -715,20 +745,32 @@ impl<'a> fmt::Display for SourceIdAsUrl<'a> {
         if let Some(protocol) = self.inner.kind.protocol() {
             write!(f, "{protocol}+")?;
         }
-        write!(f, "{}", self.inner.url)?;
-        if let SourceIdInner {
-            kind: SourceKind::Git(ref reference),
-            ref precise,
-            ..
-        } = *self.inner
-        {
-            if let Some(pretty) = reference.pretty_ref(self.encoded) {
-                write!(f, "?{}", pretty)?;
+
+        match &self.inner.kind {
+            SourceKind::Path
+            | SourceKind::Registry
+            | SourceKind::SparseRegistry
+            | SourceKind::LocalRegistry
+            | SourceKind::Directory => {
+                write!(f, "{}", self.inner.url)?;
             }
-            if let Some(precise) = precise.as_ref() {
-                write!(f, "#{}", precise)?;
+            SourceKind::Git(reference) => {
+                write!(f, "{}", self.inner.url)?;
+                if let Some(pretty) = reference.pretty_ref(self.encoded) {
+                    write!(f, "?{pretty}")?;
+                }
+                if let Some(precise) = self.inner.precise.as_ref() {
+                    write!(f, "#{precise}")?;
+                }
+            }
+            SourceKind::Patched(cksum) => {
+                let mut url = self.inner.url.clone();
+                url.query_pairs_mut()
+                    .append_pair(PatchChecksum::KEY, cksum.as_str());
+                write!(f, "{url}")?;
             }
         }
+
         Ok(())
     }
 }
