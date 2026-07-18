@@ -1752,6 +1752,81 @@ Hello from patched git!
 }
 
 #[cargo_test]
+fn patch_git_source_not_pinned_to_commit() {
+    // Reproduces review finding #4 (architectural bug).
+    //
+    // A patched git dependency is never pinned to a commit in `Cargo.lock`.
+    // A normal git dependency records `git+<url>#<commit>`, but the patched
+    // entry records only `patched+git+<url>?patch-cksum=<hash>` with no commit.
+    // The locked commit is therefore lost, and the build is not reproducible:
+    // moving the branch HEAD changes what is built with an unchanged lockfile.
+    //
+    // The assertions below capture the CURRENT (buggy) behavior so the fix can
+    // flip them. When #4 is fixed, the patched source string should embed a
+    // `#<commit>` fragment just like a plain git source.
+    let git_project = git::repo(&paths::root().join("bar"))
+        .file("Cargo.toml", &basic_manifest("bar", "1.0.0"))
+        .file("src/lib.rs", "// original\n")
+        .build();
+    let url = git_project.url();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            &format!(
+                r#"
+                cargo-features = ["patch-files"]
+
+                [package]
+                name = "foo"
+                edition = "2015"
+
+                [dependencies]
+                bar = {{ git = "{url}" }}
+
+                [patch."{url}"]
+                bar = {{ git = "{url}", patches = ["patches/hello.patch"] }}
+                "#
+            ),
+        )
+        .file("src/main.rs", "fn main() { bar::hello(); }")
+        .file(
+            "patches/hello.patch",
+            r#"
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1,3 @@
+-// original
++pub fn hello() {
++    println!("Hello from patched git!");
++}
+"#,
+        )
+        .build();
+
+    p.cargo("run")
+        .masquerade_as_nightly_cargo(&["patch-files"])
+        .with_stdout_data(str![[r#"
+Hello from patched git!
+
+"#]])
+        .run();
+
+    // BUG #4: the patched git source string carries a `patch-cksum` but no
+    // `#<commit>`, so the resolved commit is not recorded in the lockfile.
+    let lockfile = p.read_lockfile();
+    let patched_src = lockfile
+        .lines()
+        .find(|line| line.contains("patched+git+"))
+        .unwrap_or_else(|| panic!("no patched git source in lockfile:\n{lockfile}"));
+    assert!(patched_src.contains("patch-cksum="), "{patched_src}");
+    assert!(
+        !patched_src.contains('#'),
+        "patched git source unexpectedly pinned to a commit (is #4 fixed?): {patched_src}"
+    );
+}
+
+#[cargo_test]
 #[cfg(unix)]
 fn patch_git_source_rejects_symlink_escape() {
     let outside = tempfile::NamedTempFile::new().unwrap();
