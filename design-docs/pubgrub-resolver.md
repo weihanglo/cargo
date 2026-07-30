@@ -7,6 +7,11 @@
 
 Branch: `pubgrub` (off `rust-lang/cargo` master).
 
+> Rebased onto upstream `master` after the `src/` flattening
+> (rust-lang/cargo#17230, #17231). Paths in this document reflect the **new**
+> layout: the module lives at `src/resolver/pubgrub/`, not
+> `src/cargo/core/resolver/pubgrub/`. See §13 if another such move lands.
+
 ---
 
 ## 1. Goal
@@ -104,7 +109,7 @@ nix develop ~/dev/dotfiles#cargo --command bash -c 'cargo build -p cargo --lib'
 nix develop ~/dev/dotfiles#cargo --command bash -c 'cargo build --bin cargo'
 
 # Unit tests for the semver conversion
-nix develop ~/dev/dotfiles#cargo --command bash -c 'cargo test -p cargo --lib core::resolver::pubgrub'
+nix develop ~/dev/dotfiles#cargo --command bash -c 'cargo test -p cargo --lib resolver::pubgrub'
 
 # Resolver-test suites
 nix develop ~/dev/dotfiles#cargo --command bash -c \
@@ -154,7 +159,7 @@ nix develop ~/dev/dotfiles#cargo --command bash -c '
 > - `diff == 0` is necessary but **not** sufficient — it cannot tell "pubgrub
 >   matched" from "flag is a no-op, default ran twice". To prove the pubgrub path
 >   actually executed, run with the flag and
->   `CARGO_LOG=cargo::core::resolver::pubgrub=debug`; you should see
+>   `CARGO_LOG=cargo::resolver::pubgrub=debug`; you should see
 >   `pubgrub resolver active: resolving N workspace member(s)` (a permanent
 >   `tracing::debug!` in `pubgrub::resolve`). It does not print without the flag.
 
@@ -163,14 +168,14 @@ nix develop ~/dev/dotfiles#cargo --command bash -c '
 ## 4. Architecture
 
 ### 4.1 Dispatch (the only fork point)
-`src/cargo/core/resolver/mod.rs::resolve()` checks
+`src/resolver/mod.rs::resolve()` checks
 `gctx.cli_unstable().pubgrub_resolver` and, if set, calls
 `pubgrub::resolve(...)` with the identical signature. Flag is declared in
-`src/cargo/core/features.rs` (`unstable_cli_options!` + parse arm
+`src/workspace/features.rs` (`unstable_cli_options!` + parse arm
 `"pubgrub-resolver"`). The single upstream call site is
-`src/cargo/ops/resolve.rs` (~line 505), unchanged.
+`src/ops/resolve.rs` (~line 505), unchanged.
 
-### 4.2 Module layout — `src/cargo/core/resolver/pubgrub/`
+### 4.2 Module layout — `src/resolver/pubgrub/`
 
 | File | Responsibility |
 |---|---|
@@ -431,57 +436,59 @@ been removed; re-add ad hoc if needed.)
 
 ## 10. Commit history (this branch)
 
-Newest first. Implementation: `9fa0e7f75`–`913116cbb`; correctness &
-error-reporting work: `8672b1ee`–`cef37a10`; earlier fixes: `eb917c1f7`,
-`c83889704`→`c916af4f5`; tests: `6d49e8644`, `1f17605b3`, `0864cb574`,
-`7d24add22`, `87e953f7b`–`22a51e300`; observability: `37fa77459`; docs:
-`cacdd97e9`, `6de3fd5be`, `68fb458d9`, `ee05f2fbb`, and this update.
+Newest first. The branch was rebased onto upstream `master` after the
+`src/` flattening (rust-lang/cargo#17230, #17231), so all hashes below are
+post-rebase; pre-rebase hashes referenced in older notes no longer resolve.
 
 ```
-cef37a10 feat(resolver): Bridge dependency-requested feature conflicts
-b93b27d9 refactor(resolver)!: Extract version_conflict_error from activation_error
-3f8a2eec feat(resolver): Bridge wrong-version errors to Cargo-native text
-81289426 feat(resolver): Bridge no-candidates errors to Cargo-native text
-72b65b23 refactor(resolver)!: Extract no_candidates_error from activation_error
-5aba275a feat(resolver): Add Cargo-native error-reporting bridge for pubgrub
-57c797dd refactor(resolver): Expose RequirementError for reuse by pubgrub
-b8995f1c fix(resolver): Detect self-referential feature cycles in pubgrub
-8c71cf85 fix(resolver): Register [replace] targets as nodes in pubgrub lockfile
-8672b1ee fix(resolver): Track patched source in pubgrub lockfile reconstruction
-f0891f17 docs(resolver): Fix broken intra-doc links in the pubgrub module
-cd65cafa fix(resolver): Read __CARGO_TEST_PUBGRUB via GlobalContext, not std::env
-22a51e300 test(resolver): Add CARGO_TEST_PUBGRUB escape hatch at the dispatch fork
-8e8a44a26 test(resolver): Add conservative-update property test for pubgrub
-592a1a47e test(resolver): Add conservative-update differential tests for pubgrub
-87e953f7b refactor(resolver): Allow seeding VersionPreferences in the raw resolve helper
-ee05f2fbb docs: Update handoff doc for cleaner verification methodology
-37fa77459 feat(resolver): Add observable trace when the pubgrub resolver runs
-68fb458d9 docs: Record curated-suite validation results for pubgrub resolver
-7d24add22 test(resolver): Skip exact error-text assertions under pubgrub
-0864cb574 test(resolver): Allow running the curated suite through pubgrub
-6de3fd5be docs: Add PubGrub resolver design & handoff doc
-c916af4f5 fix(resolver): Match v1 lock graph for weak dependency features
-cacdd97e9 docs(unstable): Document -Zpubgrub-resolver flag
-1f17605b3 test(resolver): Add pubgrub vs SAT property test
-c83889704 fix(resolver): Record feature-agnostic dependency edges in pubgrub lock
-6d49e8644 test(resolver): Add SAT-validated pubgrub resolution suite
-eb917c1f7 fix(resolver): Seed workspace members into the pubgrub version cache
-913116cbb feat(resolver): Wire up pubgrub resolution and reconstruct Resolve
-f1d92a2d1 feat(resolver): Implement pubgrub DependencyProvider over the registry
-bc8028b86 feat(resolver): Add PubGrubPackage encoding for the pubgrub resolver
-083c0686a feat(resolver): Add semver-to-pubgrub VersionSet conversion
-9fa0e7f75 feat(resolver): Add -Zpubgrub-resolver flag and module skeleton
+1d962d2d feat(resolver): Bridge dependency-requested feature conflicts
+11bb57a3 refactor(resolver)!: Extract version_conflict_error from activation_error
+a0790c64 feat(resolver): Bridge wrong-version errors to Cargo-native text
+544a958f docs: Update handoff for patch/replace/cyclic fixes and error bridge
+2adfdc99 feat(resolver): Bridge no-candidates errors to Cargo-native text
+03e1ad2c refactor(resolver)!: Extract no_candidates_error from activation_error
+a032be9d feat(resolver): Add Cargo-native error-reporting bridge for pubgrub
+0be1ff1e refactor(resolver): Expose RequirementError for reuse by pubgrub
+18d8bf9b fix(resolver): Detect self-referential feature cycles in pubgrub
+dd2eb59d fix(resolver): Register [replace] targets as nodes in pubgrub lockfile
+c019576a fix(resolver): Track patched source in pubgrub lockfile reconstruction
+2a325f3d docs(resolver): Fix broken intra-doc links in the pubgrub module
+479dfaba fix(resolver): Read __CARGO_TEST_PUBGRUB via GlobalContext, not std::env
+cc424abf style(resolver): Run rustfmt over the pubgrub module and tests
+ba89e626 test(resolver): Update -Z help snapshot for the pubgrub-resolver flag
+3ffa9692 docs: Record conservative-update verification and full-testsuite survey
+0e883888 test(resolver): Add CARGO_TEST_PUBGRUB escape hatch at the dispatch fork
+2b121462 test(resolver): Add conservative-update property test for pubgrub
+c8fd93d9 test(resolver): Add conservative-update differential tests for pubgrub
+0da50059 refactor(resolver): Allow seeding VersionPreferences in the raw resolve helper
+f78a9f60 docs: Update handoff doc for cleaner verification methodology
+8be9ef27 feat(resolver): Add observable trace when the pubgrub resolver runs
+ac7cea9a docs: Record curated-suite validation results for pubgrub resolver
+91b8becb test(resolver): Skip exact error-text assertions under pubgrub
+66f80090 test(resolver): Allow running the curated suite through pubgrub
+c38f1881 docs: Add PubGrub resolver design & handoff doc
+d20c932b fix(resolver): Match v1 lock graph for weak dependency features
+8979a653 docs(unstable): Document -Zpubgrub-resolver flag
+f2427df5 test(resolver): Add pubgrub vs SAT property test
+46a70382 fix(resolver): Record feature-agnostic dependency edges in pubgrub lock
+cb61ba39 test(resolver): Add SAT-validated pubgrub resolution suite
+4c292038 fix(resolver): Seed workspace members into the pubgrub version cache
+7b50b495 feat(resolver): Wire up pubgrub resolution and reconstruct Resolve
+a2cae053 feat(resolver): Implement pubgrub DependencyProvider over the registry
+15ceb3f3 feat(resolver): Add PubGrubPackage encoding for the pubgrub resolver
+94a474f8 feat(resolver): Add semver-to-pubgrub VersionSet conversion
+eaaccf9c feat(resolver): Add -Zpubgrub-resolver flag and module skeleton
 ```
 
-> Note on history: commit `c83889704` ("feature-agnostic edges") was a wrong
-> turn; it is corrected by `c916af4f5`. The current `solution.rs`/`provider.rs`
+> Note on history: commit `46a70382` ("feature-agnostic edges") was a wrong
+> turn; it is corrected by `d20c932b`. The current `solution.rs`/`provider.rs`
 > reflect the corrected (activation-gated + weak-records-edge) behavior.
 
 ---
 
 ## 11. Quick orientation for the next agent
 
-- Start in `src/cargo/core/resolver/pubgrub/mod.rs`, then `provider.rs`
+- Start in `src/resolver/pubgrub/mod.rs`, then `provider.rs`
   (`get_dependencies` is the heart), then `solution.rs`.
 - To debug an edge mismatch: instrument `dep_cache.rs::resolve_features`
   (default resolver) and `solution.rs` (pubgrub) for a target crate, compare.
@@ -541,3 +548,89 @@ causes:
 
 Both are output/formatting, not misresolution. The 28 still-ignored are
 genuinely unavailable (network/container/`hg`/manual-only), not nightly-gated.
+
+---
+
+## 13. Rebasing across an upstream file move
+
+Upstream flattened `src/` in two PRs
+([#17230](https://github.com/rust-lang/cargo/pull/17230): `src/cargo`→`src`,
+`src/doc`→`doc`, `src/etc`→`etc`;
+[#17231](https://github.com/rust-lang/cargo/pull/17231): elevate
+`resolver`/`compiler`/`context` to top-level mods, rename `core`→`workspace`).
+A plain `rebase --onto` does **not** survive this.
+The technique below did, and is worth reusing if another move lands.
+
+### Why plain rebase fails
+
+Git's rename detection relocates *modified* files correctly — it found
+`src/resolver/mod.rs` and `src/workspace/features.rs` on its own.
+But it will not relocate a **newly added directory**:
+our `pubgrub/` module landed back at the dead
+`src/cargo/core/resolver/pubgrub/` path.
+`merge.directoryRenames=true` did not help (and it was not a rename-limit
+issue — 503 renames were detected fine).
+
+### The recipe
+
+Rewrite paths *first*, then rebase.
+Do the whole thing in a throwaway clone before touching the real repo:
+
+```sh
+git clone --no-local /path/to/repo /tmp/pgtest
+```
+
+1. **`git filter-branch --index-filter`** over `$FORK_POINT..pubgrub`, rewriting
+   the index with `git ls-files -s | sed …` to move our paths
+   (`src/cargo/core/resolver/`→`src/resolver/`,
+   `src/cargo/core/features.rs`→`src/workspace/features.rs`,
+   `src/doc/src/reference/unstable.md`→`doc/book/src/reference/unstable.md`).
+2. In the **same** filter, rewrite stale module paths *inside the files we own*
+   (`crate::core::resolver::`→`crate::resolver::`,
+   `crate::core::summary::`→`crate::workspace::summary::`,
+   `cargo::core::Resolve`→`cargo::resolver::Resolve`, …).
+   Folding these into the filter keeps every commit individually buildable, so
+   `git bisect` still works.
+3. **Only then** `git rebase --onto master@origin $FORK_POINT`.
+
+### The critical constraint (cost real time)
+
+**Do not rewrite upstream-owned files inside the filter.**
+An early attempt also rewrote `src/resolver/{mod,dep_cache,errors}.rs` and
+`crates/resolver-tests/src/lib.rs`; that destroys the common ancestor git needs
+for a 3-way merge and turned 1 conflict into 5.
+Restrict the filter to files we exclusively own, and fix our few inserted lines
+in upstream files as a normal follow-up edit.
+
+One exception is safe: a string that exists in **neither** base is provably ours
+alone, so a blanket rewrite cannot corrupt upstream content.
+`pub(in crate::core::resolver)` qualified (verify with `git show $BASE:$FILE`
+before relying on this).
+
+### Generated files: regenerate, never hand-merge
+
+Both remaining conflicts were in generated artifacts:
+
+- `Cargo.lock` — resolve with `--ours`, then let cargo rewrite it
+  (`cargo metadata >/dev/null`). It correctly re-adds `pubgrub`,
+  `version-ranges`, and `priority-queue` while keeping upstream's `getrandom`
+  bump.
+- `tests/testsuite/cargo/z_help/stdout.term.svg` — regenerate with
+  `SNAPSHOTS=overwrite cargo test -p cargo --test testsuite -- cargo::z_help`.
+  Taking `--theirs` silently **drops upstream's newly added `-Z` flags**;
+  regenerating restored 55 lines while keeping our `pubgrub-resolver` entry.
+
+### Unrelated upstream change caught by the rebase
+
+Upstream moved hot maps to the `Fx` hasher, so `Resolve::new` now takes
+`HashMap<_, _, FxBuildHasher>`.
+`solution.rs` must import `crate::util::data_structures::{HashMap, HashSet}`
+(not `std::collections`) and construct with `::default()` rather than `::new()`.
+
+### Verification after the rebase
+
+Re-run the §3 suites and compare against the pre-rebase numbers — they should
+match exactly (they did: 3/2/8/11 for
+`pubgrub_graph`/`smoke`/`update`/`validated`, and 37/37 + 28/28 for the curated
+suites under `__CARGO_TEST_PUBGRUB=1`).
+Also spot-check that mid-branch commits still build, to confirm bisectability.
