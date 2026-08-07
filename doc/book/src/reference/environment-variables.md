@@ -131,11 +131,15 @@ In summary, the supported environment variables are:
 * `CARGO_PROFILE_<name>_STRIP` --- Controls stripping of symbols and/or debuginfos, see [`profile.<name>.strip`].
 * `CARGO_REGISTRIES_<name>_CREDENTIAL_PROVIDER` --- Credential provider for a registry, see [`registries.<name>.credential-provider`].
 * `CARGO_REGISTRIES_<name>_INDEX` --- URL of a registry index, see [`registries.<name>.index`].
+* `CARGO_REGISTRIES_<name>_MIN_PUBLISH_AGE` --- Minimum publish age for packages from a registry, see [`registries.<name>.min-publish-age`].
 * `CARGO_REGISTRIES_<name>_TOKEN` --- Authentication token of a registry, see [`registries.<name>.token`].
 * `CARGO_REGISTRY_CREDENTIAL_PROVIDER` --- Credential provider for [crates.io], see [`registry.credential-provider`].
 * `CARGO_REGISTRY_DEFAULT` --- Default registry for the `--registry` flag, see [`registry.default`].
 * `CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS` --- Credential providers for registries that do not have a specific provider defined. See [`registry.global-credential-providers`].
+* `CARGO_REGISTRY_GLOBAL_MIN_PUBLISH_AGE` --- Default minimum publish age for packages from registries, see [`registry.global-min-publish-age`].
+* `CARGO_REGISTRY_MIN_PUBLISH_AGE` --- Minimum publish age for packages from [crates.io], see [`registry.min-publish-age`].
 * `CARGO_REGISTRY_TOKEN` --- Authentication token for [crates.io], see [`registry.token`].
+* `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE` --- How recently published versions are treated during dependency resolution, see [`resolver.incompatible-publish-age`].
 * `CARGO_TARGET_<triple>_LINKER` --- The linker to use, see [`target.<triple>.linker`]. The triple must be [converted to uppercase and underscores](config.md#environment-variables).
 * `CARGO_TARGET_<triple>_RUNNER` --- The executable runner, see [`target.<triple>.runner`].
 * `CARGO_TARGET_<triple>_RUSTFLAGS` --- Extra `rustc` flags for a target, see [`target.<triple>.rustflags`].
@@ -198,12 +202,16 @@ In summary, the supported environment variables are:
 [`profile.<name>.rpath`]: config.md#profilenamerpath
 [`profile.<name>.split-debuginfo`]: config.md#profilenamesplit-debuginfo
 [`profile.<name>.strip`]: config.md#profilenamestrip
+[`resolver.incompatible-publish-age`]: config.md#resolverincompatible-publish-age
 [`registries.<name>.credential-provider`]: config.md#registriesnamecredential-provider
 [`registries.<name>.index`]: config.md#registriesnameindex
+[`registries.<name>.min-publish-age`]: config.md#registriesnamemin-publish-age
 [`registries.<name>.token`]: config.md#registriesnametoken
 [`registry.credential-provider`]: config.md#registrycredential-provider
 [`registry.default`]: config.md#registrydefault
 [`registry.global-credential-providers`]: config.md#registryglobal-credential-providers
+[`registry.global-min-publish-age`]: config.md#registryglobal-min-publish-age
+[`registry.min-publish-age`]: config.md#registrymin-publish-age
 [`registry.token`]: config.md#registrytoken
 [`target.<triple>.linker`]: config.md#targettriplelinker
 [`target.<triple>.runner`]: config.md#targettriplerunner
