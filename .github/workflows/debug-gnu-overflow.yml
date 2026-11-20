@@ -10,14 +10,14 @@ on:
     inputs:
       iterations:
         description: rustc invocations per job
-        default: '3000'
+        default: '20000'
 
 permissions:
   contents: read
 
 jobs:
   stress:
-    name: ${{ matrix.toolchain }} threads=${{ matrix.threads }}
+    name: ${{ matrix.toolchain }} threads=${{ matrix.threads }}${{ matrix.capture && ' cdb' || '' }}
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
@@ -42,39 +42,39 @@ jobs:
           # MSVC control: never hit this in cargo's CI.
           - toolchain: nightly-x86_64-pc-windows-msvc
             threads: '8'
+          # Run probes under cdb to dump the first-chance overflow.
+          - toolchain: nightly-x86_64-pc-windows-gnu
+            threads: default
+            capture: true
+            iterations: '8000'
     env:
       DUMP_DIR: ${{ github.workspace }}\dumps
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
     - name: Install toolchain
       run: rustup toolchain install --profile minimal --no-self-update ${{ matrix.toolchain }}
-    - name: Enable crash dumps for rustc.exe
-      shell: pwsh
-      run: |
-        New-Item -ItemType Directory -Force $env:DUMP_DIR | Out-Null
-        $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\rustc.exe'
-        New-Item -Force $key | Out-Null
-        New-ItemProperty -Force $key -Name DumpFolder -PropertyType ExpandString -Value $env:DUMP_DIR | Out-Null
-        # 1 = minidump: thread stacks and modules, which is what we need.
-        New-ItemProperty -Force $key -Name DumpType -PropertyType DWord -Value 1 | Out-Null
-        New-ItemProperty -Force $key -Name DumpCount -PropertyType DWord -Value 10 | Out-Null
     - name: Stress rustc
       shell: pwsh
       run: >
         ci/debug-gnu-overflow.ps1
         -Toolchain ${{ matrix.toolchain }}
         -Threads ${{ matrix.threads }}
-        -Iterations ${{ inputs.iterations || '3000' }}
+        -Iterations ${{ matrix.iterations || inputs.iterations || '20000' }}
         -OutDir stress-out
+        ${{ matrix.capture && '-DumpDir $env:DUMP_DIR' || '' }}
     - name: Print stacks from crash dumps
-      if: always()
+      if: always() && matrix.capture
       shell: pwsh
       run: |
+        Get-ChildItem $env:DUMP_DIR -Filter sov-*.txt -ErrorAction SilentlyContinue | ForEach-Object {
+          Write-Host "===== $($_.Name) (logged at the overflow, no symbols)"
+          Get-Content $_ | Select-Object -First 400 | Write-Host
+        }
         $cdb = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
         $dumps = @(Get-ChildItem $env:DUMP_DIR -Filter *.dmp -ErrorAction SilentlyContinue)
         Write-Host "found $($dumps.Count) dump(s)"
         foreach ($d in $dumps | Select-Object -First 3) {
-          $log = Join-Path $env:DUMP_DIR "$($d.BaseName).txt"
+          $log = Join-Path $env:DUMP_DIR "$($d.BaseName)-sym.txt"
           # The faulting stack can be very deep, so raise the frame limit.
           & $cdb -z $d.FullName -logo $log -c '.symfix; .reload; .ecxr; .kframes 0x4000; kn; ~*kn 60; q' | Out-Null
           $lines = Get-Content $log
@@ -86,7 +86,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: ${{ matrix.toolchain }}-threads-${{ matrix.threads }}
+        name: ${{ matrix.toolchain }}-threads-${{ matrix.threads }}${{ matrix.capture && '-cdb' || '' }}
         path: |
           stress-out
           dumps
