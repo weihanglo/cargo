@@ -10,75 +10,77 @@ on:
     inputs:
       iterations:
         description: rustc invocations per job
-        default: '20000'
+        default: '100000'
 
 permissions:
   contents: read
 
 jobs:
   stress:
-    name: ${{ matrix.toolchain }} threads=${{ matrix.threads }}${{ matrix.capture && format(' cdb {0}', matrix.capture) || '' }}${{ matrix.parallel && format(' p{0}', matrix.parallel) || '' }}
+    name: >-
+      threads=${{ matrix.threads }}
+      ${{ matrix.stack && format('stack={0}', matrix.stack) || '' }}
+      ${{ matrix.driver && format('driver {0}', matrix.driver) || '' }}
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Same config as the cargo CI failures, under more CPU contention.
-          - toolchain: nightly-x86_64-pc-windows-gnu
-            threads: default
-            parallel: 16
-            iterations: '40000'
-          # Run probes under cdb to dump the first-chance overflow.
-          # Hits are about 1 in 10k runs, so spread over several jobs.
-          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 1, iterations: '20000' }
-          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 2, iterations: '20000' }
-          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 3, iterations: '20000' }
-          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 4, iterations: '20000' }
-          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 5, iterations: '20000' }
-          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 6, iterations: '20000' }
+          # Frontend thread count. About 1 in 17k crashes with 2 threads,
+          # so each needs ~100k runs to tell them apart.
+          - threads: '1'
+          - threads: default
+          - threads: '4'
+          - threads: '8'
+          - threads: '16'
+          # Main thread stack reserve, patched into a copy of rustc.exe.
+          # Gone with a big stack: the recursion at exit is finite.
+          # More often with a small one: a cheaper reproducer.
+          - { threads: default, stack: '262144' }
+          - { threads: default, stack: '67108864' }
+          # rustc driver that walks the stack in-process on overflow.
+          - { threads: default, driver: 1 }
+          - { threads: default, driver: 2 }
     env:
-      DUMP_DIR: ${{ github.workspace }}\dumps
+      TOOLCHAIN: nightly-x86_64-pc-windows-gnu
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
     - name: Install toolchain
-      run: rustup toolchain install --profile minimal --no-self-update ${{ matrix.toolchain }}
+      run: rustup toolchain install --profile minimal --no-self-update ${{ env.TOOLCHAIN }}
+    - name: Build overflow driver
+      if: matrix.driver
+      shell: pwsh
+      run: |
+        rustup component add --toolchain ${{ env.TOOLCHAIN }} rustc-dev
+        cargo +${{ env.TOOLCHAIN }} build --release --manifest-path ci/overflow-driver/Cargo.toml
+        # Next to rustc.exe, so it finds the sysroot and rustc_driver DLL.
+        $exe = Join-Path (Split-Path (rustup which --toolchain ${{ env.TOOLCHAIN }} rustc)) 'rustc-veh.exe'
+        Copy-Item ci/overflow-driver/target/release/overflow-driver.exe $exe
+        "RUSTC_VEH=$exe" >> $env:GITHUB_ENV
+    - name: Self-test overflow driver
+      if: matrix.driver
+      shell: pwsh
+      run: |
+        $env:OVERFLOW_DRIVER_SELFTEST = '1'
+        $out = & $env:RUSTC_VEH --version 2>&1 | Out-String
+        Write-Host "exit: $LASTEXITCODE"
+        ($out -split "`n" | Select-Object -First 40) -join "`n" | Write-Host
+        if ($out -notmatch '\[overflow-driver\] frames: \d+') { throw 'handler printed no frames' }
+        exit 0
     - name: Stress rustc
       shell: pwsh
       run: >
         ci/debug-gnu-overflow.ps1
-        -Toolchain ${{ matrix.toolchain }}
+        -Toolchain ${{ env.TOOLCHAIN }}
         -Threads ${{ matrix.threads }}
-        -Iterations ${{ matrix.iterations || inputs.iterations || '20000' }}
+        -Iterations ${{ inputs.iterations || '100000' }}
         -OutDir stress-out
-        -Parallel ${{ matrix.parallel || 4 }}
-        ${{ matrix.capture && '-DumpDir $env:DUMP_DIR' || '' }}
-    - name: Print stacks from crash dumps
-      if: always() && matrix.capture
-      shell: pwsh
-      run: |
-        Get-ChildItem $env:DUMP_DIR -Filter sov-*.txt -ErrorAction SilentlyContinue | ForEach-Object {
-          Write-Host "===== $($_.Name) (logged at the overflow, no symbols)"
-          Get-Content $_ | Select-Object -First 400 | Write-Host
-        }
-        $cdb = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
-        $dumps = @(Get-ChildItem $env:DUMP_DIR -Filter *.dmp -ErrorAction SilentlyContinue)
-        Write-Host "found $($dumps.Count) dump(s)"
-        foreach ($d in $dumps | Select-Object -First 3) {
-          $log = Join-Path $env:DUMP_DIR "$($d.BaseName)-sym.txt"
-          # The faulting stack can be very deep, so raise the frame limit.
-          & $cdb -z $d.FullName -logo $log -c '.symfix; .reload; .ecxr; .kframes 0x4000; kn; ~*kn 60; q' | Out-Null
-          $lines = Get-Content $log
-          Write-Host "===== $($d.Name): $($lines.Count) lines, head"
-          $lines | Select-Object -First 200 | Write-Host
-          Write-Host "===== $($d.Name): tail"
-          $lines | Select-Object -Last 150 | Write-Host
-        }
+        ${{ matrix.stack && format('-StackReserve {0}', matrix.stack) || '' }}
+        ${{ matrix.driver && '-RustcPath $env:RUSTC_VEH' || '' }}
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: ${{ matrix.toolchain }}-threads-${{ matrix.threads }}${{ matrix.capture && format('-cdb{0}', matrix.capture) || '' }}${{ matrix.parallel && format('-p{0}', matrix.parallel) || '' }}
-        path: |
-          stress-out
-          dumps
+        name: threads-${{ matrix.threads }}${{ matrix.stack && format('-stack{0}', matrix.stack) || '' }}${{ matrix.driver && format('-driver{0}', matrix.driver) || '' }}
+        path: stress-out
         if-no-files-found: ignore

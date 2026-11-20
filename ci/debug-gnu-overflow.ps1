@@ -18,6 +18,10 @@ param(
     [int] $Parallel = 4,
     [string] $OutDir = 'stress-out',
     [string] $DumpDir = '',
+    # Use this rustc (e.g. the overflow driver) instead of the toolchain's.
+    [string] $RustcPath = '',
+    # Run a copy of rustc.exe with this main thread stack reserve, in bytes.
+    [long] $StackReserve = 0,
     [int] $MaxDumps = 3
 )
 
@@ -26,6 +30,24 @@ $STATUS_STACK_OVERFLOW = -1073741571 # 0xC00000FD as Int32
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $rustc = (rustup which --toolchain $Toolchain rustc).Trim()
+
+# Offset of SizeOfStackReserve in a PE32+ image.
+function StackReserveOffset([byte[]] $pe) {
+    [BitConverter]::ToInt32($pe, 0x3C) + 4 + 20 + 72
+}
+$pe = [IO.File]::ReadAllBytes($rustc)
+Write-Host "rustc.exe SizeOfStackReserve: $([BitConverter]::ToUInt64($pe, (StackReserveOffset $pe)))"
+if ($StackReserve) {
+    # Same directory, so rustc still finds its sysroot and DLLs.
+    $copy = Join-Path (Split-Path $rustc) "rustc-stack-$StackReserve.exe"
+    [BitConverter]::GetBytes([uint64]$StackReserve).CopyTo($pe, (StackReserveOffset $pe))
+    [IO.File]::WriteAllBytes($copy, $pe)
+    $rustc = $copy
+}
+if ($RustcPath) {
+    $rustc = $RustcPath
+}
+Write-Host "using $rustc"
 & $rustc -vV
 
 $work = Join-Path ([IO.Path]::GetTempPath()) "gnu-overflow-$([guid]::NewGuid())"
@@ -131,7 +153,7 @@ $others = @($fails | Where-Object { $overflows -notcontains $_ })
 $summary = @"
 | toolchain | threads | runs | stack overflows (probe / check) | other failures | time |
 |---|---|---|---|---|---|
-| ``$Toolchain``$(if ($DumpDir) { ' (cdb)' }) | $Threads | $ran | $($overflows.Count) ($probeOverflows / $checkOverflows) | $($others.Count) | $([int]$sw.Elapsed.TotalSeconds)s |
+| ``$Toolchain``$(if ($DumpDir) { ' (cdb)' })$(if ($StackReserve) { " (stack $StackReserve)" })$(if ($RustcPath) { ' (driver)' }) | $Threads | $ran | $($overflows.Count) ($probeOverflows / $checkOverflows) | $($others.Count) | $([int]$sw.Elapsed.TotalSeconds)s |
 "@
 Write-Host $summary
 if ($env:GITHUB_STEP_SUMMARY) {
@@ -142,7 +164,8 @@ foreach ($f in $others | Select-Object -First 5) {
     Write-Host "--- other failure: run $($f.I) ($($f.Kind)) exit=$($f.Code)"
     Write-Host $f.Stderr
 }
-foreach ($f in $overflows | Select-Object -First 3) {
+foreach ($f in $overflows) {
     Write-Host "--- overflow: run $($f.I) ($($f.Kind)) exit=$($f.Code)"
     Write-Host $f.Stderr
+    Set-Content -Path (Join-Path $OutDir "overflow-$($f.I).txt") -Value $f.Stderr
 }

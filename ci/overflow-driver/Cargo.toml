@@ -1,0 +1,11 @@
+[package]
+name = "overflow-driver"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Not part of cargo's workspace.
+[workspace]
+
+[profile.release]
+debug = "line-tables-only"
