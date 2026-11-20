@@ -87,7 +87,7 @@ $results = 1..$Iterations | ForEach-Object -ThrottleLimit $Parallel -Parallel {
         $null = '' | & $cdbExe @a 2> $errFile
         $err = if (Test-Path $errFile) { Get-Content -Raw $errFile } else { '' }
         # Second check in case cdb missed the event and Rust's handler ran.
-        $hit = ((Test-Path $log) -and (Select-String -Quiet -Path $log -Pattern 'SOV-HIT')) -or
+        $hit = ((Test-Path $log) -and (Select-String -Quiet -Path $log -Pattern '^SOV-HIT$')) -or
             ("$err" -match 'overflowed its stack')
         if (-not $hit) { Remove-Item -Force -ErrorAction SilentlyContinue $log }
         Remove-Item -Force -ErrorAction SilentlyContinue $errFile, $script

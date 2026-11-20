@@ -17,36 +17,26 @@ permissions:
 
 jobs:
   stress:
-    name: ${{ matrix.toolchain }} threads=${{ matrix.threads }}${{ matrix.capture && ' cdb' || '' }}
+    name: ${{ matrix.toolchain }} threads=${{ matrix.threads }}${{ matrix.capture && format(' cdb {0}', matrix.capture) || '' }}${{ matrix.parallel && format(' p{0}', matrix.parallel) || '' }}
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Current nightly with its default (2 frontend threads).
+          # Same config as the cargo CI failures, under more CPU contention.
           - toolchain: nightly-x86_64-pc-windows-gnu
             threads: default
-          # Same nightly, parallel frontend off.
-          - toolchain: nightly-x86_64-pc-windows-gnu
-            threads: '1'
-          # More threads, in case that raises the crash rate.
-          - toolchain: nightly-x86_64-pc-windows-gnu
-            threads: '8'
-          # Last nightly before rust-lang/rust#162848 (rustc 8eb778d04 2026-11-12),
-          # with its default (1 thread) and with 2 threads forced.
-          - toolchain: nightly-2026-11-13-x86_64-pc-windows-gnu
-            threads: default
-          - toolchain: nightly-2026-11-13-x86_64-pc-windows-gnu
-            threads: '2'
-          # MSVC control: never hit this in cargo's CI.
-          - toolchain: nightly-x86_64-pc-windows-msvc
-            threads: '8'
+            parallel: 16
+            iterations: '40000'
           # Run probes under cdb to dump the first-chance overflow.
-          - toolchain: nightly-x86_64-pc-windows-gnu
-            threads: default
-            capture: true
-            iterations: '8000'
+          # Hits are about 1 in 10k runs, so spread over several jobs.
+          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 1, iterations: '20000' }
+          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 2, iterations: '20000' }
+          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 3, iterations: '20000' }
+          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 4, iterations: '20000' }
+          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 5, iterations: '20000' }
+          - { toolchain: nightly-x86_64-pc-windows-gnu, threads: default, capture: 6, iterations: '20000' }
     env:
       DUMP_DIR: ${{ github.workspace }}\dumps
     steps:
@@ -61,6 +51,7 @@ jobs:
         -Threads ${{ matrix.threads }}
         -Iterations ${{ matrix.iterations || inputs.iterations || '20000' }}
         -OutDir stress-out
+        -Parallel ${{ matrix.parallel || 4 }}
         ${{ matrix.capture && '-DumpDir $env:DUMP_DIR' || '' }}
     - name: Print stacks from crash dumps
       if: always() && matrix.capture
@@ -86,7 +77,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: ${{ matrix.toolchain }}-threads-${{ matrix.threads }}${{ matrix.capture && '-cdb' || '' }}
+        name: ${{ matrix.toolchain }}-threads-${{ matrix.threads }}${{ matrix.capture && format('-cdb{0}', matrix.capture) || '' }}${{ matrix.parallel && format('-p{0}', matrix.parallel) || '' }}
         path: |
           stress-out
           dumps
