@@ -1,0 +1,93 @@
+# Throwaway: stress rustc to reproduce rust-lang/rust#139070
+# (random STATUS_STACK_OVERFLOW on windows-gnu) and grab crash dumps.
+name: Debug windows-gnu stack overflow
+
+on:
+  push:
+    branches:
+      - debug-gnu-overflow
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: rustc invocations per job
+        default: '3000'
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    name: ${{ matrix.toolchain }} threads=${{ matrix.threads }}
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Current nightly with its default (2 frontend threads).
+          - toolchain: nightly-x86_64-pc-windows-gnu
+            threads: default
+          # Same nightly, parallel frontend off.
+          - toolchain: nightly-x86_64-pc-windows-gnu
+            threads: '1'
+          # More threads, in case that raises the crash rate.
+          - toolchain: nightly-x86_64-pc-windows-gnu
+            threads: '8'
+          # Last nightly before rust-lang/rust#162848 (rustc 8eb778d04 2026-11-12),
+          # with its default (1 thread) and with 2 threads forced.
+          - toolchain: nightly-2026-11-13-x86_64-pc-windows-gnu
+            threads: default
+          - toolchain: nightly-2026-11-13-x86_64-pc-windows-gnu
+            threads: '2'
+          # MSVC control: never hit this in cargo's CI.
+          - toolchain: nightly-x86_64-pc-windows-msvc
+            threads: '8'
+    env:
+      DUMP_DIR: ${{ github.workspace }}\dumps
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+    - name: Install toolchain
+      run: rustup toolchain install --profile minimal --no-self-update ${{ matrix.toolchain }}
+    - name: Enable crash dumps for rustc.exe
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force $env:DUMP_DIR | Out-Null
+        $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\rustc.exe'
+        New-Item -Force $key | Out-Null
+        New-ItemProperty -Force $key -Name DumpFolder -PropertyType ExpandString -Value $env:DUMP_DIR | Out-Null
+        # 1 = minidump: thread stacks and modules, which is what we need.
+        New-ItemProperty -Force $key -Name DumpType -PropertyType DWord -Value 1 | Out-Null
+        New-ItemProperty -Force $key -Name DumpCount -PropertyType DWord -Value 10 | Out-Null
+    - name: Stress rustc
+      shell: pwsh
+      run: >
+        ci/debug-gnu-overflow.ps1
+        -Toolchain ${{ matrix.toolchain }}
+        -Threads ${{ matrix.threads }}
+        -Iterations ${{ inputs.iterations || '3000' }}
+        -OutDir stress-out
+    - name: Print stacks from crash dumps
+      if: always()
+      shell: pwsh
+      run: |
+        $cdb = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
+        $dumps = @(Get-ChildItem $env:DUMP_DIR -Filter *.dmp -ErrorAction SilentlyContinue)
+        Write-Host "found $($dumps.Count) dump(s)"
+        foreach ($d in $dumps | Select-Object -First 3) {
+          $log = Join-Path $env:DUMP_DIR "$($d.BaseName).txt"
+          # The faulting stack can be very deep, so raise the frame limit.
+          & $cdb -z $d.FullName -logo $log -c '.symfix; .reload; .ecxr; .kframes 0x4000; kn; ~*kn 60; q' | Out-Null
+          $lines = Get-Content $log
+          Write-Host "===== $($d.Name): $($lines.Count) lines, head"
+          $lines | Select-Object -First 200 | Write-Host
+          Write-Host "===== $($d.Name): tail"
+          $lines | Select-Object -Last 150 | Write-Host
+        }
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: ${{ matrix.toolchain }}-threads-${{ matrix.threads }}
+        path: |
+          stress-out
+          dumps
+        if-no-files-found: ignore
