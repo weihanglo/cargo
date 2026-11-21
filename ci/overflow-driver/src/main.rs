@@ -376,6 +376,7 @@ mod threads {
     const TH32CS_SNAPTHREAD: u32 = 0x4;
     const SYNCHRONIZE: u32 = 0x0010_0000;
     const THREAD_QUERY_INFORMATION: u32 = 0x0040;
+    const THREAD_QUERY_LIMITED_INFORMATION: u32 = 0x0800;
     const THREAD_QUERY_SET_WIN32_START_ADDRESS: u32 = 9;
     const GET_MODULE_HANDLE_EX_FLAGS: u32 = 0x4 | 0x2;
     const WAIT_OBJECT_0: u32 = 0;
@@ -403,6 +404,25 @@ mod threads {
         fn GetCurrentThreadId() -> u32;
         fn GetModuleHandleExW(flags: u32, addr: *const u16, out: *mut *mut c_void) -> i32;
         fn GetModuleFileNameW(module: *mut c_void, buf: *mut u16, len: u32) -> u32;
+        fn GetThreadDescription(h: *mut c_void, desc: *mut *mut u16) -> i32;
+        fn LocalFree(mem: *mut c_void) -> *mut c_void;
+    }
+
+    /// Thread name as set by `SetThreadDescription` (Rust std does this).
+    unsafe fn thread_name(h: *mut c_void) -> String {
+        unsafe {
+            let mut p = std::ptr::null_mut();
+            if GetThreadDescription(h, &mut p) < 0 || p.is_null() {
+                return "?".to_string();
+            }
+            let mut len = 0;
+            while *p.add(len) != 0 {
+                len += 1;
+            }
+            let name = String::from_utf16_lossy(std::slice::from_raw_parts(p, len));
+            LocalFree(p.cast());
+            name
+        }
     }
 
     #[link(name = "ntdll")]
@@ -471,7 +491,9 @@ mod threads {
         let mut pool = 0;
         for tid in unsafe { other_threads() } {
             unsafe {
-                let h = OpenThread(SYNCHRONIZE | THREAD_QUERY_INFORMATION, 0, tid);
+                let access =
+                    SYNCHRONIZE | THREAD_QUERY_INFORMATION | THREAD_QUERY_LIMITED_INFORMATION;
+                let h = OpenThread(access, 0, tid);
                 if h.is_null() {
                     continue;
                 }
@@ -480,7 +502,7 @@ mod threads {
                     pool += 1;
                     CloseHandle(h);
                 } else {
-                    ours.push((h, module));
+                    ours.push((h, format!("{}@{module}", thread_name(h))));
                 }
             }
         }
@@ -492,7 +514,7 @@ mod threads {
         }
         let modules: Vec<&str> = ours.iter().map(|(_, m)| m.as_str()).collect();
         let mut msg = format!(
-            "[overflow-driver-exit] alive={} ntdll_pool={pool} start_modules={modules:?}",
+            "[overflow-driver-exit] alive={} ntdll_pool={pool} threads={modules:?}",
             ours.len()
         );
         let mut timed_out = 0;
