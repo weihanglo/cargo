@@ -1,5 +1,9 @@
 # Throwaway: stress rustc to reproduce rust-lang/rust#139070
-# (random STATUS_STACK_OVERFLOW on windows-gnu) and grab crash dumps.
+# (random STATUS_STACK_OVERFLOW on windows-gnu) and check a fix.
+#
+# A/B test with CI artifacts installed by rustup-toolchain-install-master:
+# `baseline` is a master commit, `fix` is a try build on top of it
+# (try job `dist-x86_64-mingw`).
 name: Debug windows-gnu stack overflow
 
 on:
@@ -9,44 +13,58 @@ on:
   workflow_dispatch:
     inputs:
       iterations:
-        description: rustc invocations per job
-        default: '50000'
+        description: rustc invocations per job (default depends on the job)
+        default: ''
 
 permissions:
   contents: read
 
+env:
+  # Parent of the fix: the master commit the try build is based on.
+  BASELINE_SHA: c7d5ba59d8e11ee2e2204b173458eec4cb41c973
+  # Try build with the `build_scoped` join fix.
+  FIX_SHA: 6ebbc66bff3bc876e9d5803b8679e85d633cb635
+
 jobs:
   stress:
     name: >-
-      threads=${{ matrix.threads }}
-      ${{ matrix.driver && format('driver {0}', matrix.driver) || '' }}
-      ${{ matrix.wait && 'wait' || '' }}
+      ${{ matrix.build }}
+      ${{ matrix.driver && 'driver' || 'rustc.exe' }}
+      ${{ matrix.shard }}
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
+        build: [baseline, fix]
+        shard: [1, 2, 3, 4]
         include:
-          # Driver, unchanged: control for this run's crash rate.
-          - { threads: default, driver: 1 }
-          - { threads: default, driver: 2 }
-          # Driver waits for pool workers before exiting (simulated join).
-          - { threads: default, driver: 3, wait: 1 }
-          - { threads: default, driver: 4, wait: 1 }
-          - { threads: default, driver: 5, wait: 1 }
-          - { threads: default, driver: 6, wait: 1 }
+          # Stock rustc.exe, the actual symptom: about 1 in 30k runs.
+          - { iterations: '100000' }
+          # The driver crashes about 1 in 5k runs, so fewer runs show the difference.
+          - { build: baseline, shard: d1, driver: 1, iterations: '50000' }
+          - { build: baseline, shard: d2, driver: 1, iterations: '50000' }
+          - { build: fix, shard: d1, driver: 1, iterations: '50000' }
+          - { build: fix, shard: d2, driver: 1, iterations: '50000' }
     env:
-      # Pinned: the driver reads winpthreads globals at RVAs from this build.
-      TOOLCHAIN: nightly-2026-11-21-x86_64-pc-windows-gnu
+      TOOLCHAIN: ${{ matrix.build }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+    - name: Install rustup-toolchain-install-master
+      run: cargo install --locked rustup-toolchain-install-master@1.12.2
     - name: Install toolchain
-      run: rustup toolchain install --profile minimal --no-self-update ${{ env.TOOLCHAIN }}
+      shell: pwsh
+      run: |
+        $sha = if ($env:TOOLCHAIN -eq 'fix') { $env:FIX_SHA } else { $env:BASELINE_SHA }
+        if (-not $sha) { throw "no commit SHA for $env:TOOLCHAIN" }
+        $components = @('-c', 'cargo')
+        if ('${{ matrix.driver }}') { $components += @('-c', 'rustc-dev', '-c', 'rust-mingw') }
+        rustup-toolchain-install-master $sha --channel nightly --host x86_64-pc-windows-gnu -n $env:TOOLCHAIN @components
+        rustc +$env:TOOLCHAIN -vV
     - name: Build overflow driver
       if: matrix.driver
       shell: pwsh
       run: |
-        rustup component add --toolchain ${{ env.TOOLCHAIN }} rustc-dev
         cargo +${{ env.TOOLCHAIN }} build --release --manifest-path ci/overflow-driver/Cargo.toml
         # Next to rustc.exe, so it finds the sysroot and rustc_driver DLL.
         $exe = Join-Path (Split-Path (rustup which --toolchain ${{ env.TOOLCHAIN }} rustc)) 'rustc-veh.exe'
@@ -64,18 +82,17 @@ jobs:
         exit 0
     - name: Stress rustc
       shell: pwsh
-      env:
-        OVERFLOW_DRIVER_WAIT: ${{ matrix.wait }}
+      # `-Zthreads=2` explicitly, so the result does not depend on the build's default.
       run: >
         ci/debug-gnu-overflow.ps1
         -Toolchain ${{ env.TOOLCHAIN }}
-        -Threads ${{ matrix.threads }}
-        -Iterations ${{ inputs.iterations || '50000' }}
+        -Threads 2
+        -Iterations ${{ inputs.iterations || matrix.iterations }}
         -OutDir stress-out
         ${{ matrix.driver && '-RustcPath $env:RUSTC_VEH' || '' }}
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: threads-${{ matrix.threads }}${{ matrix.driver && format('-driver{0}', matrix.driver) || '' }}${{ matrix.wait && '-wait' || '' }}
+        name: ${{ matrix.build }}-${{ matrix.driver && 'driver' || 'rustc' }}-${{ matrix.shard }}
         path: stress-out
         if-no-files-found: ignore
