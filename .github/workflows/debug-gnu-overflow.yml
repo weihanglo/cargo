@@ -10,7 +10,7 @@ on:
     inputs:
       iterations:
         description: rustc invocations per job
-        default: '20000'
+        default: '30000'
 
 permissions:
   contents: read
@@ -20,18 +20,19 @@ jobs:
     name: >-
       threads=${{ matrix.threads }}
       ${{ matrix.driver && format('driver {0}', matrix.driver) || '' }}
-      ${{ matrix.wait && 'wait' || '' }}
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Driver: name the rustc threads still alive when main returns.
+          # Driver: dump winpthreads state on the exit-time access violation.
           - { threads: default, driver: 1 }
-          - { threads: '1', driver: 2 }
+          - { threads: default, driver: 2 }
+          - { threads: default, driver: 3 }
     env:
-      TOOLCHAIN: nightly-x86_64-pc-windows-gnu
+      # Pinned: the driver reads winpthreads globals at RVAs from this build.
+      TOOLCHAIN: nightly-2026-11-21-x86_64-pc-windows-gnu
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
     - name: Install toolchain
@@ -58,18 +59,16 @@ jobs:
         exit 0
     - name: Stress rustc
       shell: pwsh
-      env:
-        OVERFLOW_DRIVER_WAIT: ${{ matrix.wait }}
       run: >
         ci/debug-gnu-overflow.ps1
         -Toolchain ${{ env.TOOLCHAIN }}
         -Threads ${{ matrix.threads }}
-        -Iterations ${{ inputs.iterations || '20000' }}
+        -Iterations ${{ inputs.iterations || '30000' }}
         -OutDir stress-out
         ${{ matrix.driver && '-RustcPath $env:RUSTC_VEH' || '' }}
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: threads-${{ matrix.threads }}${{ matrix.driver && format('-driver{0}', matrix.driver) || '' }}${{ matrix.wait && '-wait' || '' }}
+        name: threads-${{ matrix.threads }}${{ matrix.driver && format('-driver{0}', matrix.driver) || '' }}
         path: stress-out
         if-no-files-found: ignore

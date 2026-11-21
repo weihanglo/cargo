@@ -84,6 +84,10 @@ mod veh {
     #[repr(C, align(16))]
     struct Context([u8; CONTEXT_SIZE]);
 
+    type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
+    type CallocFn = unsafe extern "C" fn(usize, usize) -> *mut c_void;
+    type FreeFn = unsafe extern "C" fn(*mut c_void);
+    type ErrnoFn = unsafe extern "C" fn() -> *mut i32;
     type LookupFn = unsafe extern "system" fn(u64, *mut u64, *mut c_void) -> *mut c_void;
     type UnwindFn = unsafe extern "system" fn(
         u32,
@@ -120,6 +124,10 @@ mod veh {
     // The handler runs on the overflowed stack, with only the 20 KiB that
     // std reserves via `SetThreadStackGuarantee`. Keep all buffers static.
     static BUSY: AtomicBool = AtomicBool::new(false);
+    static mut MALLOC: Option<MallocFn> = None;
+    static mut CALLOC: Option<CallocFn> = None;
+    static mut FREE: Option<FreeFn> = None;
+    static mut ERRNO: Option<ErrnoFn> = None;
     static mut LOOKUP: Option<LookupFn> = None;
     static mut UNWIND: Option<UnwindFn> = None;
     static mut CTX: Context = Context([0; CONTEXT_SIZE]);
@@ -136,6 +144,14 @@ mod veh {
             let unwind = GetProcAddress(ntdll, c"RtlVirtualUnwind".as_ptr().cast());
             LOOKUP = std::mem::transmute::<*mut c_void, Option<LookupFn>>(lookup);
             UNWIND = std::mem::transmute::<*mut c_void, Option<UnwindFn>>(unwind);
+            let msvcrt = GetModuleHandleA(c"msvcrt.dll".as_ptr().cast());
+            if !msvcrt.is_null() {
+                let f = |n: &std::ffi::CStr| GetProcAddress(msvcrt, n.as_ptr().cast());
+                MALLOC = std::mem::transmute::<*mut c_void, Option<MallocFn>>(f(c"malloc"));
+                CALLOC = std::mem::transmute::<*mut c_void, Option<CallocFn>>(f(c"calloc"));
+                FREE = std::mem::transmute::<*mut c_void, Option<FreeFn>>(f(c"free"));
+                ERRNO = std::mem::transmute::<*mut c_void, Option<ErrnoFn>>(f(c"_errno"));
+            }
             // First in the chain, so it runs before std's handler.
             AddVectoredExceptionHandler(1, handler);
         }
@@ -196,6 +212,9 @@ mod veh {
             }
             w(b" thread ");
             dec(GetCurrentThreadId() as u64);
+            if rec.code == EXCEPTION_ACCESS_VIOLATION {
+                probe_runtime_state();
+            }
             w(b" rsp=");
             hex(reg(c, CTX_RSP));
             w(b" stack_base=");
@@ -267,6 +286,76 @@ mod veh {
             }
             w(b"[overflow-driver] end\n");
             flush();
+        }
+    }
+
+    /// Reads module-relative globals, after checking the module's SizeOfImage.
+    unsafe fn module_globals(name: &std::ffi::CStr, image_size: u32, rvas: &[(&[u8], u32)]) {
+        unsafe {
+            let base = GetModuleHandleA(name.as_ptr().cast()) as *const u8;
+            w(b"\n[overflow-driver]   ");
+            w(name.to_bytes());
+            if base.is_null() {
+                w(b" not loaded");
+                return;
+            }
+            let pe = base.add(base.add(0x3C).cast::<u32>().read_unaligned() as usize);
+            let size = pe.add(4 + 20 + 56).cast::<u32>().read_unaligned();
+            if size != image_size {
+                w(b" unexpected SizeOfImage ");
+                hex(size as u64);
+                return;
+            }
+            for (label, rva) in rvas {
+                w(b" ");
+                w(label);
+                w(b"=");
+                hex(base.add(*rva as usize).cast::<u64>().read_unaligned());
+            }
+        }
+    }
+
+    /// State of the allocator and winpthreads when the exit-time NULL deref hits.
+    /// RVAs are from the nightly-2026-11-21 windows-gnu libwinpthread-1.dll and libgcc_s_seh-1.dll.
+    unsafe fn probe_runtime_state() {
+        unsafe {
+            if let Some(errno) = ERRNO {
+                w(b"\n[overflow-driver]   errno=");
+                dec(*errno() as u64);
+            }
+            module_globals(
+                c"libwinpthread-1.dll",
+                0x16000,
+                &[
+                    (b"id_next", 0xe088),
+                    (b"id_max", 0xe090),
+                    (b"id_count", 0xe098),
+                    (b"id_list", 0xe0a0),
+                    (b"mem_last", 0xe0a8),
+                    (b"mem_root", 0xe0b0),
+                    (b"mtx_pthr", 0xa048),
+                    (b"tls_index", 0xa058),
+                ],
+            );
+            module_globals(
+                c"libgcc_s_seh-1.dll",
+                0x29000,
+                &[(b"emutls_once", 0x24070), (b"emutls_key", 0x24080), (b"emutls_mutex", 0x24088)],
+            );
+            if let (Some(malloc), Some(calloc), Some(free)) = (MALLOC, CALLOC, FREE) {
+                let a = calloc(1, 0x1e0);
+                let b = malloc(0x100);
+                w(b"\n[overflow-driver]   test calloc(1,0x1e0)=");
+                hex(a as u64);
+                w(b" malloc(0x100)=");
+                hex(b as u64);
+                if !a.is_null() {
+                    free(a);
+                }
+                if !b.is_null() {
+                    free(b);
+                }
+            }
         }
     }
 
