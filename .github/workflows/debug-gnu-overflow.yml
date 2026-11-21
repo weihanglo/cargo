@@ -10,7 +10,7 @@ on:
     inputs:
       iterations:
         description: rustc invocations per job
-        default: '100000'
+        default: '50000'
 
 permissions:
   contents: read
@@ -27,21 +27,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Frontend thread count. About 1 in 17k crashes with 2 threads,
-          # so each needs ~100k runs to tell them apart.
-          - threads: '1'
-          - threads: default
-          - threads: '4'
-          - threads: '8'
-          - threads: '16'
-          # Main thread stack reserve, patched into a copy of rustc.exe.
-          # Gone with a big stack: the recursion at exit is finite.
-          # More often with a small one: a cheaper reproducer.
-          - { threads: default, stack: '262144' }
-          - { threads: default, stack: '67108864' }
-          # rustc driver that walks the stack in-process on overflow.
+          # rustc driver that walks the stack in-process on overflow or access violation.
           - { threads: default, driver: 1 }
           - { threads: default, driver: 2 }
+          - { threads: default, driver: 3 }
+          - { threads: '1', driver: 4 }
     env:
       TOOLCHAIN: nightly-x86_64-pc-windows-gnu
     steps:
@@ -74,7 +64,7 @@ jobs:
         ci/debug-gnu-overflow.ps1
         -Toolchain ${{ env.TOOLCHAIN }}
         -Threads ${{ matrix.threads }}
-        -Iterations ${{ inputs.iterations || '100000' }}
+        -Iterations ${{ inputs.iterations || '50000' }}
         -OutDir stress-out
         ${{ matrix.stack && format('-StackReserve {0}', matrix.stack) || '' }}
         ${{ matrix.driver && '-RustcPath $env:RUSTC_VEH' || '' }}

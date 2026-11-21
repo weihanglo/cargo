@@ -149,6 +149,12 @@ $overflows = @($fails | Where-Object {
 $probeOverflows = @($overflows | Where-Object Kind -eq 'probe').Count
 $checkOverflows = @($overflows | Where-Object Kind -eq 'check').Count
 $others = @($fails | Where-Object { $overflows -notcontains $_ })
+# Driver handler output in runs that still exited 0 (first-chance exceptions that got handled).
+$handled = @($results | Where-Object { $_.Code -eq 0 -and $_.Stderr -match '\[overflow-driver\]' })
+if ($handled) {
+    Write-Host "driver handler fired in $($handled.Count) passing run(s); first one:"
+    Write-Host $handled[0].Stderr
+}
 
 $summary = @"
 | toolchain | threads | runs | stack overflows (probe / check) | other failures | time |
@@ -163,6 +169,9 @@ if ($env:GITHUB_STEP_SUMMARY) {
 foreach ($f in $others | Select-Object -First 5) {
     Write-Host "--- other failure: run $($f.I) ($($f.Kind)) exit=$($f.Code)"
     Write-Host $f.Stderr
+}
+foreach ($f in $others) {
+    Set-Content -Path (Join-Path $OutDir "failure-$($f.I).txt") -Value $f.Stderr
 }
 foreach ($f in $overflows) {
     Write-Host "--- overflow: run $($f.I) ($($f.Kind)) exit=$($f.Code)"
