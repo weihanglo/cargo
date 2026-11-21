@@ -10,7 +10,7 @@ on:
     inputs:
       iterations:
         description: rustc invocations per job
-        default: '30000'
+        default: '50000'
 
 permissions:
   contents: read
@@ -20,16 +20,21 @@ jobs:
     name: >-
       threads=${{ matrix.threads }}
       ${{ matrix.driver && format('driver {0}', matrix.driver) || '' }}
+      ${{ matrix.wait && 'wait' || '' }}
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Driver: dump winpthreads state on the exit-time access violation.
+          # Driver, unchanged: control for this run's crash rate.
           - { threads: default, driver: 1 }
           - { threads: default, driver: 2 }
-          - { threads: default, driver: 3 }
+          # Driver waits for pool workers before exiting (simulated join).
+          - { threads: default, driver: 3, wait: 1 }
+          - { threads: default, driver: 4, wait: 1 }
+          - { threads: default, driver: 5, wait: 1 }
+          - { threads: default, driver: 6, wait: 1 }
     env:
       # Pinned: the driver reads winpthreads globals at RVAs from this build.
       TOOLCHAIN: nightly-2026-11-21-x86_64-pc-windows-gnu
@@ -59,16 +64,18 @@ jobs:
         exit 0
     - name: Stress rustc
       shell: pwsh
+      env:
+        OVERFLOW_DRIVER_WAIT: ${{ matrix.wait }}
       run: >
         ci/debug-gnu-overflow.ps1
         -Toolchain ${{ env.TOOLCHAIN }}
         -Threads ${{ matrix.threads }}
-        -Iterations ${{ inputs.iterations || '30000' }}
+        -Iterations ${{ inputs.iterations || '50000' }}
         -OutDir stress-out
         ${{ matrix.driver && '-RustcPath $env:RUSTC_VEH' || '' }}
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: threads-${{ matrix.threads }}${{ matrix.driver && format('-driver{0}', matrix.driver) || '' }}
+        name: threads-${{ matrix.threads }}${{ matrix.driver && format('-driver{0}', matrix.driver) || '' }}${{ matrix.wait && '-wait' || '' }}
         path: stress-out
         if-no-files-found: ignore

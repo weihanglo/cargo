@@ -9,7 +9,8 @@
 //! Set `OVERFLOW_DRIVER_SELFTEST=1` to overflow on purpose and check the handler.
 //!
 //! After rustc returns, it prints how many other threads are still alive.
-//! Set `OVERFLOW_DRIVER_WAIT=1` to also wait for them to exit before exiting.
+//! Set `OVERFLOW_DRIVER_WAIT=1` to also wait for the thread pool workers (named `rustc`)
+//! to exit before exiting, which simulates joining them in `build_scoped`.
 
 #![feature(rustc_private)]
 
@@ -607,9 +608,11 @@ mod threads {
             ours.len()
         );
         let mut timed_out = 0;
-        for (h, _) in &ours {
+        for (h, name) in &ours {
             unsafe {
-                if wait && WaitForSingleObject(*h, 2000) != WAIT_OBJECT_0 {
+                // The ctrl-c handler thread blocks forever, so only wait for pool workers.
+                let worker = name.starts_with("rustc@");
+                if wait && worker && WaitForSingleObject(*h, 2000) != WAIT_OBJECT_0 {
                     timed_out += 1;
                 }
                 CloseHandle(*h);

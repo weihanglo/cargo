@@ -159,6 +159,11 @@ if ($alive) {
     }
     $failNoAlive = @($fails | Where-Object { $alive -notcontains $_ }).Count
     Write-Host "failed runs without live threads at exit: $failNoAlive"
+    $worker = @($alive | Where-Object { $_.Stderr -match 'rustc@' })
+    $workerFailed = @($worker | Where-Object Code -ne 0).Count
+    $msg = "pool worker alive at exit: $($worker.Count) run(s), $workerFailed failed; failures without one: $($fails.Count - $workerFailed)"
+    Write-Host $msg
+    if ($env:GITHUB_STEP_SUMMARY) { Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "`n$msg" }
 }
 # Driver handler output in runs that still exited 0 (first-chance exceptions that got handled).
 $handled = @($results | Where-Object { $_.Code -eq 0 -and $_.Stderr -match '\[overflow-driver\]' })
