@@ -7,6 +7,9 @@
 //! and print each frame as `module+offset` for offline symbolization.
 //!
 //! Set `OVERFLOW_DRIVER_SELFTEST=1` to overflow on purpose and check the handler.
+//!
+//! After rustc returns, it prints how many other threads are still alive.
+//! Set `OVERFLOW_DRIVER_WAIT=1` to also wait for them to exit before exiting.
 
 #![feature(rustc_private)]
 
@@ -24,7 +27,12 @@ fn main() -> ExitCode {
     if std::env::var_os("OVERFLOW_DRIVER_SELFTEST").is_some() {
         std::hint::black_box(recurse(0));
     }
-    rustc_driver::main()
+    let code = rustc_driver::main();
+    #[cfg(windows)]
+    unsafe {
+        threads::report_alive_at_exit();
+    }
+    code
 }
 
 #[allow(unconditional_recursion)]
@@ -357,5 +365,148 @@ mod veh {
             );
             OUT_LEN = 0;
         }
+    }
+}
+
+#[cfg(windows)]
+mod threads {
+    use std::ffi::c_void;
+    use std::time::Instant;
+
+    const TH32CS_SNAPTHREAD: u32 = 0x4;
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const THREAD_QUERY_INFORMATION: u32 = 0x0040;
+    const THREAD_QUERY_SET_WIN32_START_ADDRESS: u32 = 9;
+    const GET_MODULE_HANDLE_EX_FLAGS: u32 = 0x4 | 0x2;
+    const WAIT_OBJECT_0: u32 = 0;
+
+    #[repr(C)]
+    struct ThreadEntry32 {
+        size: u32,
+        usage: u32,
+        thread_id: u32,
+        owner_process_id: u32,
+        base_pri: i32,
+        delta_pri: i32,
+        flags: u32,
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> *mut c_void;
+        fn Thread32First(snap: *mut c_void, entry: *mut ThreadEntry32) -> i32;
+        fn Thread32Next(snap: *mut c_void, entry: *mut ThreadEntry32) -> i32;
+        fn OpenThread(access: u32, inherit: i32, tid: u32) -> *mut c_void;
+        fn WaitForSingleObject(h: *mut c_void, ms: u32) -> u32;
+        fn CloseHandle(h: *mut c_void) -> i32;
+        fn GetCurrentProcessId() -> u32;
+        fn GetCurrentThreadId() -> u32;
+        fn GetModuleHandleExW(flags: u32, addr: *const u16, out: *mut *mut c_void) -> i32;
+        fn GetModuleFileNameW(module: *mut c_void, buf: *mut u16, len: u32) -> u32;
+    }
+
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtQueryInformationThread(
+            h: *mut c_void,
+            class: u32,
+            info: *mut c_void,
+            len: u32,
+            ret_len: *mut u32,
+        ) -> i32;
+    }
+
+    /// Module file name of the thread's start address, e.g. `ntdll.dll`.
+    unsafe fn start_module(h: *mut c_void) -> String {
+        unsafe {
+            let mut addr = 0usize;
+            let status = NtQueryInformationThread(
+                h,
+                THREAD_QUERY_SET_WIN32_START_ADDRESS,
+                (&raw mut addr).cast(),
+                size_of::<usize>() as u32,
+                std::ptr::null_mut(),
+            );
+            let mut module = std::ptr::null_mut();
+            if status < 0
+                || GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAGS, addr as *const u16, &mut module)
+                    == 0
+            {
+                return "?".to_string();
+            }
+            let mut buf = [0u16; 520];
+            let len = GetModuleFileNameW(module, buf.as_mut_ptr(), buf.len() as u32) as usize;
+            let path = String::from_utf16_lossy(&buf[..len]);
+            path.rsplit(['\\', '/']).next().unwrap_or("?").to_string()
+        }
+    }
+
+    unsafe fn other_threads() -> Vec<u32> {
+        let mut out = Vec::new();
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if snap as isize == -1 {
+                return out;
+            }
+            let (pid, me) = (GetCurrentProcessId(), GetCurrentThreadId());
+            let mut e: ThreadEntry32 = std::mem::zeroed();
+            e.size = size_of::<ThreadEntry32>() as u32;
+            let mut ok = Thread32First(snap, &mut e);
+            while ok != 0 {
+                if e.owner_process_id == pid && e.thread_id != me {
+                    out.push(e.thread_id);
+                }
+                ok = Thread32Next(snap, &mut e);
+            }
+            CloseHandle(snap);
+        }
+        out
+    }
+
+    pub unsafe fn report_alive_at_exit() {
+        let wait = std::env::var_os("OVERFLOW_DRIVER_WAIT").is_some_and(|v| !v.is_empty());
+        let start = Instant::now();
+        // Threads not started by the OS loader's thread pool (start address in ntdll).
+        let mut ours = Vec::new();
+        let mut pool = 0;
+        for tid in unsafe { other_threads() } {
+            unsafe {
+                let h = OpenThread(SYNCHRONIZE | THREAD_QUERY_INFORMATION, 0, tid);
+                if h.is_null() {
+                    continue;
+                }
+                let module = start_module(h);
+                if module.eq_ignore_ascii_case("ntdll.dll") {
+                    pool += 1;
+                    CloseHandle(h);
+                } else {
+                    ours.push((h, module));
+                }
+            }
+        }
+        if ours.is_empty() {
+            for (h, _) in ours {
+                unsafe { CloseHandle(h) };
+            }
+            return;
+        }
+        let modules: Vec<&str> = ours.iter().map(|(_, m)| m.as_str()).collect();
+        let mut msg = format!(
+            "[overflow-driver-exit] alive={} ntdll_pool={pool} start_modules={modules:?}",
+            ours.len()
+        );
+        let mut timed_out = 0;
+        for (h, _) in &ours {
+            unsafe {
+                if wait && WaitForSingleObject(*h, 2000) != WAIT_OBJECT_0 {
+                    timed_out += 1;
+                }
+                CloseHandle(*h);
+            }
+        }
+        if wait {
+            msg += &format!(" waited_us={} timed_out={timed_out}", start.elapsed().as_micros());
+        }
+        eprintln!("{msg}");
     }
 }

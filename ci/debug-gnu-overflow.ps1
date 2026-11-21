@@ -149,6 +149,17 @@ $overflows = @($fails | Where-Object {
 $probeOverflows = @($overflows | Where-Object Kind -eq 'probe').Count
 $checkOverflows = @($overflows | Where-Object Kind -eq 'check').Count
 $others = @($fails | Where-Object { $overflows -notcontains $_ })
+# Driver: runs where rustc threads were still alive when main returned.
+$alive = @($results | Where-Object { $_.Stderr -match '\[overflow-driver-exit\]' })
+if ($alive) {
+    $aliveFailed = @($alive | Where-Object Code -ne 0).Count
+    Write-Host "live threads at exit in $($alive.Count) run(s), $aliveFailed of them failed; examples:"
+    $alive | Select-Object -First 5 | ForEach-Object {
+        Write-Host "  run $($_.I) exit=$($_.Code): $(($_.Stderr -split "`n" | Select-String 'overflow-driver-exit') -join ' ')"
+    }
+    $failNoAlive = @($fails | Where-Object { $alive -notcontains $_ }).Count
+    Write-Host "failed runs without live threads at exit: $failNoAlive"
+}
 # Driver handler output in runs that still exited 0 (first-chance exceptions that got handled).
 $handled = @($results | Where-Object { $_.Code -eq 0 -and $_.Stderr -match '\[overflow-driver\]' })
 if ($handled) {

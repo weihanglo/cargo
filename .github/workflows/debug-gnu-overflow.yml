@@ -19,19 +19,21 @@ jobs:
   stress:
     name: >-
       threads=${{ matrix.threads }}
-      ${{ matrix.stack && format('stack={0}', matrix.stack) || '' }}
       ${{ matrix.driver && format('driver {0}', matrix.driver) || '' }}
+      ${{ matrix.wait && 'wait' || '' }}
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          # rustc driver that walks the stack in-process on overflow or access violation.
+          # Driver: count rustc threads still alive when main returns.
           - { threads: default, driver: 1 }
           - { threads: default, driver: 2 }
-          - { threads: default, driver: 3 }
-          - { threads: '1', driver: 4 }
+          - { threads: '1', driver: 3 }
+          # Driver: also wait for those threads to exit before exiting.
+          - { threads: default, driver: 4, wait: 1 }
+          - { threads: default, driver: 5, wait: 1 }
     env:
       TOOLCHAIN: nightly-x86_64-pc-windows-gnu
     steps:
@@ -60,17 +62,18 @@ jobs:
         exit 0
     - name: Stress rustc
       shell: pwsh
+      env:
+        OVERFLOW_DRIVER_WAIT: ${{ matrix.wait }}
       run: >
         ci/debug-gnu-overflow.ps1
         -Toolchain ${{ env.TOOLCHAIN }}
         -Threads ${{ matrix.threads }}
         -Iterations ${{ inputs.iterations || '50000' }}
         -OutDir stress-out
-        ${{ matrix.stack && format('-StackReserve {0}', matrix.stack) || '' }}
         ${{ matrix.driver && '-RustcPath $env:RUSTC_VEH' || '' }}
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: threads-${{ matrix.threads }}${{ matrix.stack && format('-stack{0}', matrix.stack) || '' }}${{ matrix.driver && format('-driver{0}', matrix.driver) || '' }}
+        name: threads-${{ matrix.threads }}${{ matrix.driver && format('-driver{0}', matrix.driver) || '' }}${{ matrix.wait && '-wait' || '' }}
         path: stress-out
         if-no-files-found: ignore
